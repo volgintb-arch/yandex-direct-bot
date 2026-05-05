@@ -1,0 +1,23 @@
+# Production deploy on 158.255.0.229.
+# Postgres runs on the host (port 5432) — bot reaches it via host.docker.internal.
+# nginx (host) proxies https://direct-bot.questlegends.ru → 127.0.0.1:3004.
+
+services:
+  bot:
+    build: .
+    image: yandex-direct-bot:latest
+    container_name: yandex-direct-bot
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:3004:3004"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

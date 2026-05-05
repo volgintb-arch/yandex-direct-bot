@@ -1,0 +1,42 @@
+{
+  "name": "yandex-direct-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Telegram bot for managing Yandex.Direct campaigns with Gemini AI",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "db:push": "prisma db push",
+    "db:generate": "prisma generate",
+    "db:studio": "prisma studio",
+    "db:reset": "prisma db push --force-reset",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write \"src/**/*.{ts,tsx,json}\""
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "@grammyjs/conversations": "^2.0.0",
+    "@hono/node-server": "^1.13.0",
+    "@prisma/client": "^6.1.0",
+    "dotenv": "^16.4.7",
+    "grammy": "^1.32.0",
+    "hono": "^4.6.0",
+    "node-cron": "^3.0.3",
+    "pino": "^9.5.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/node-cron": "^3.0.11",
+    "pino-pretty": "^13.0.0",
+    "prettier": "^3.4.0",
+    "prisma": "^6.1.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
