@@ -27,10 +27,9 @@ const schema = z.object({
   YANDEX_METRIKA_TOKEN: z.string().optional(),
   YANDEX_METRIKA_COUNTER_ID: z.string().optional(),
 
-  // Gemini
-  GEMINI_API_KEY: z.string().min(1),
-  GEMINI_MODEL_FLASH: z.string().default('gemini-2.5-flash'),
-  GEMINI_MODEL_PRO: z.string().default('gemini-2.5-pro'),
+  // YandexGPT (Foundation Models)
+  YANDEX_GPT_API_KEY: z.string().min(1),
+  YANDEX_CLOUD_FOLDER_ID: z.string().min(1),
 
   // CRM (QL OS)
   CRM_BASE_URL: z.string().url(),

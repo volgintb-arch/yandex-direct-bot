@@ -16,15 +16,12 @@ export interface WordstatResponse {
 /** Get top search queries similar to a phrase from Yandex Wordstat. */
 export async function getTopRequests(
   phrase: string,
-  regionIds: number[] = [],
-  opts: { devices?: ('desktop' | 'mobile' | 'tablet')[] } = {}
+  regionIds: number[] = []
 ): Promise<WordstatResponse> {
   const url = `${config.YANDEX_WORDSTAT_API_URL}/topRequests`;
-  const body = JSON.stringify({
-    phrase,
-    geoFilter: regionIds.length > 0 ? { regions: regionIds } : undefined,
-    deviceFilter: opts.devices ? { devices: opts.devices } : undefined,
-  });
+  const payload: Record<string, unknown> = { phrase };
+  if (regionIds.length > 0) payload.regions = regionIds;
+  const body = JSON.stringify(payload);
   const start = Date.now();
   let status: number | undefined;
   let errorMsg: string | undefined;

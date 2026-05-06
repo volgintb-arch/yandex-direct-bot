@@ -16,7 +16,6 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,json}\""
   },
   "dependencies": {
-    "@google/genai": "^1.0.0",
     "@grammyjs/conversations": "^2.0.0",
     "@hono/node-server": "^1.13.0",
     "@prisma/client": "^6.1.0",

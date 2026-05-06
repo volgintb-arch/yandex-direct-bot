@@ -2,7 +2,7 @@ import type { SessionContext } from '../middlewares/session.js';
 import { db } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import * as wordstat from '../../services/wordstat/client.js';
-import * as gemini from '../../services/ai/gemini.js';
+import * as ygpt from '../../services/ai/yandex-gpt.js';
 import * as crm from '../../services/crm-questlegends/client.js';
 import { listCampaigns } from '../../services/yandex-direct/campaigns.js';
 
@@ -46,8 +46,8 @@ export async function handleHealth(ctx: SessionContext): Promise<void> {
       return `${list.length} кампаний`;
     }),
     timed('Wordstat', () => wordstat.ping()),
-    timed('Gemini Flash', () => gemini.ping('flash')),
-    timed('Gemini Pro', () => gemini.ping('pro')),
+    timed('YandexGPT Lite', () => ygpt.ping('lite')),
+    timed('YandexGPT Pro', () => ygpt.ping('pro')),
     timed('CRM (QuestLegends)', () => crm.ping()),
   ]);
 
