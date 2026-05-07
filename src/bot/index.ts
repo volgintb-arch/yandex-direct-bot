@@ -12,6 +12,8 @@ import { handleStart, handleHelp } from './handlers/start.js';
 import { handleHealth } from './handlers/health.js';
 import { handleGrant, handleRevoke, handleUsers } from './handlers/grant.js';
 import { handleCreateCampaign } from './handlers/create-campaign.js';
+import { handleUploadImage } from './handlers/upload-image.js';
+import { handleSyncImages, handleListImages } from './handlers/images.js';
 import {
   handleCplAi,
   handleCplAccept,
@@ -39,6 +41,10 @@ bot.command('ping', async (ctx) => {
   await ctx.reply('pong');
 });
 bot.command('health', handleHealth);
+bot.command('images', handleListImages);
+bot.command('syncimages', async (ctx) =>
+  requireAdmin(ctx, () => Promise.resolve(handleSyncImages(ctx)))
+);
 bot.command('cancel', async (ctx) => {
   ctx.session.state = 'idle';
   ctx.session.pendingApprovalId = null;
@@ -93,6 +99,9 @@ bot.on('callback_query:data', async (ctx) => {
     await ctx.answerCallbackQuery({ text: '❌ Ошибка, попробуй ещё раз' }).catch(() => {});
   }
 });
+
+// ─── Photo messages → image bank ──────────────────────────────────────
+bot.on('message:photo', handleUploadImage);
 
 // ─── Free-form text messages ──────────────────────────────────────────
 // Order matters: state-machine handlers > intent detection > unknown.

@@ -1,4 +1,6 @@
 import { direct } from './client.js';
+import { db } from '../../lib/db.js';
+import { logger } from '../../lib/logger.js';
 
 export interface AdImageSummary {
   AdImageHash: string;
@@ -53,4 +55,81 @@ export async function uploadAdImage(input: {
     );
   }
   return result.AdImageHash;
+}
+
+/**
+ * Sync all images from Direct account into local YandexImage table.
+ * Idempotent — preserves AI descriptions on rows that already exist.
+ */
+export async function syncImagesToDb(): Promise<{ synced: number; new: number }> {
+  const remote = await listAdImages();
+  const existing = await db.yandexImage.findMany({ select: { hash: true } });
+  const existingSet = new Set(existing.map((r) => r.hash));
+
+  let added = 0;
+  for (const img of remote) {
+    if (existingSet.has(img.AdImageHash)) {
+      // Update non-text fields in case URL changed.
+      await db.yandexImage.update({
+        where: { hash: img.AdImageHash },
+        data: {
+          name: img.Name ?? null,
+          format: img.Subtype ?? null,
+          url: img.OriginalUrl ?? img.PreviewUrl ?? null,
+          syncedAt: new Date(),
+        },
+      });
+    } else {
+      await db.yandexImage.create({
+        data: {
+          hash: img.AdImageHash,
+          name: img.Name ?? null,
+          format: img.Subtype ?? null,
+          url: img.OriginalUrl ?? img.PreviewUrl ?? null,
+        },
+      });
+      added++;
+    }
+  }
+  logger.info({ remote: remote.length, added }, 'images synced');
+  return { synced: remote.length, new: added };
+}
+
+/**
+ * Pick image candidates for a network ad concept.
+ * Currently — simple keyword overlap with description/tags/name; later can
+ * use embeddings.  Returns at most `take` images, prioritising those with
+ * AI descriptions.
+ */
+export async function findImagesForConcept(
+  conceptText: string,
+  take = 6
+): Promise<Array<{ hash: string; description: string | null; url: string | null }>> {
+  const all = await db.yandexImage.findMany({
+    orderBy: [{ description: { sort: 'desc', nulls: 'last' } }, { syncedAt: 'desc' }],
+  });
+  if (all.length === 0) return [];
+
+  const conceptLower = conceptText.toLowerCase();
+  const conceptWords = new Set(
+    conceptLower.split(/\s+/).filter((w) => w.length >= 4)
+  );
+
+  const scored = all.map((img) => {
+    const haystack = [img.description ?? '', img.name ?? '', ...(img.tags ?? [])]
+      .join(' ')
+      .toLowerCase();
+    let score = 0;
+    for (const w of conceptWords) {
+      if (haystack.includes(w)) score++;
+    }
+    return { img, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+
+  return scored.slice(0, take).map(({ img }) => ({
+    hash: img.hash,
+    description: img.description,
+    url: img.url,
+  }));
 }

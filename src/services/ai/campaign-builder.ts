@@ -1,10 +1,15 @@
 import * as ygpt from './yandex-gpt.js';
 import * as wordstat from '../wordstat/client.js';
 import { findRegionByName, ensureRegionsCache } from '../yandex-direct/regions.js';
+import { findImagesForConcept } from '../yandex-direct/imageads.js';
 import { getKnowledgeContext } from '../knowledge/manager.js';
 import type { CampaignVariant } from './prompts/search-campaign.js';
 import { buildStrategiesPrompt, type StrategiesResponse } from './prompts/strategies.js';
 import { buildSearchVariantPrompt } from './prompts/search-variant.js';
+import {
+  buildNetworkVariantPrompt,
+  type NetworkVariantResponse,
+} from './prompts/network-variant.js';
 import { buildCplPrompt, type CplSuggestion } from './prompts/cpl-suggestion.js';
 import { buildRevisionPrompt } from './prompts/revision.js';
 import { buildShrinkPrompt } from './prompts/shrink.js';
@@ -26,6 +31,19 @@ export interface BuildCampaignResult {
   regionId: number;
   resolvedGeoName: string;
   wordstatPhrasesUsed: number;
+}
+
+/** Variant + chosen image for РСЯ. */
+export interface NetworkVariantWithImage extends CampaignVariant {
+  selectedImageHash: string | null;
+  selectedImageDescription: string | null;
+}
+
+export interface BuildNetworkCampaignResult {
+  variants: NetworkVariantWithImage[];
+  regionId: number;
+  resolvedGeoName: string;
+  imagesAvailable: number;
 }
 
 /**
@@ -126,6 +144,128 @@ export async function buildSearchCampaign(
     regionId: region.yandexId,
     resolvedGeoName: region.name,
     wordstatPhrasesUsed: wordstatResp.length,
+  };
+}
+
+/**
+ * Multi-call РСЯ generation:
+ *   1. Resolve geo + Wordstat seeds + knowledge in parallel
+ *   2. Lite suggests 3 strategies tuned for РСЯ (broader, emotional)
+ *   3. For each strategy: pick image candidates from bank → Pro generates ONE variant
+ */
+export async function buildNetworkCampaign(
+  input: BuildCampaignInput
+): Promise<BuildNetworkCampaignResult> {
+  await ensureRegionsCache();
+  const region = await findRegionByName(input.geo);
+  if (!region) {
+    throw new ApiError(`Город "${input.geo}" не найден в справочнике Яндекса`, 'campaign_builder');
+  }
+
+  const [wordstatResp, knowledge] = await Promise.all([
+    safeWordstat(input.brief, region.yandexId),
+    getKnowledgeContext({ scope: 'network', city: region.name }),
+  ]);
+
+  const stratPrompt = buildStrategiesPrompt({
+    geo: region.name,
+    brief: input.brief,
+    wordstatTop: wordstatResp,
+  });
+  const strategiesResp = await ygpt.generateJson<StrategiesResponse>('lite', {
+    prompt: stratPrompt.prompt,
+    system: stratPrompt.system,
+    temperature: 0.85,
+    maxTokens: 2000,
+  });
+  const strategies = strategiesResp.strategies?.slice(0, 3) ?? [];
+  if (strategies.length === 0) {
+    throw new ApiError('YandexGPT не предложил стратегий', 'campaign_builder');
+  }
+
+  // For each strategy: pick image candidates relevant to its anchors,
+  // then ask Pro to generate a variant + select an image index.
+  const variantPromises = strategies.map(async (strategy, idx) => {
+    const conceptText = `${strategy.name} ${strategy.focus} ${strategy.anchor_keywords.join(' ')}`;
+    const imageCandidates = await findImagesForConcept(conceptText, 6);
+    const indexedCandidates = imageCandidates.map((img, i) => ({
+      index: i,
+      description: img.description,
+    }));
+
+    const { system, prompt } = buildNetworkVariantPrompt({
+      geo: region.name,
+      dailyBudget: input.dailyBudget,
+      targetCpl: input.targetCpl,
+      siteUrl: input.siteUrl,
+      brief: input.brief,
+      strategy,
+      imageCandidates: indexedCandidates,
+      learnedRules: knowledge.rules,
+      topAdsExamples: knowledge.topAds,
+    });
+
+    try {
+      const resp = await ygpt.generateJson<NetworkVariantResponse>('pro', {
+        prompt,
+        system,
+        temperature: 0.75,
+        maxTokens: 5000,
+      });
+      if (!isWellFormedVariant(resp as unknown as CampaignVariant)) {
+        logger.warn({ strategy: strategy.name }, 'network variant missing fields');
+        return null;
+      }
+      const chosenIdx = typeof resp.selected_image_index === 'number' ? resp.selected_image_index : -1;
+      const chosen = chosenIdx >= 0 && chosenIdx < imageCandidates.length ? imageCandidates[chosenIdx] : null;
+
+      let variant: NetworkVariantWithImage = {
+        variant_id: `v${idx + 1}`,
+        title: resp.title,
+        strategy_explanation: resp.strategy_explanation,
+        draft: resp.draft,
+        selectedImageHash: chosen?.hash ?? null,
+        selectedImageDescription: chosen?.description ?? null,
+      };
+
+      const violations = validateVariant(variant);
+      if (violations.length > 0) {
+        try {
+          const shrunk = await shrinkVariant(variant);
+          variant = {
+            ...shrunk,
+            selectedImageHash: variant.selectedImageHash,
+            selectedImageDescription: variant.selectedImageDescription,
+          };
+        } catch (err) {
+          logger.warn({ err }, 'auto-shrink failed for network variant');
+        }
+      }
+      return variant;
+    } catch (err) {
+      logger.warn({ err, strategy: strategy.name }, 'network variant generation failed');
+      return null;
+    }
+  });
+
+  const variants = (await Promise.all(variantPromises)).filter(
+    (v): v is NetworkVariantWithImage => v !== null
+  );
+  if (variants.length === 0) {
+    throw new ApiError('Не удалось сгенерировать ни одного РСЯ-варианта', 'campaign_builder');
+  }
+
+  // Count distinct images available across all variants' searches
+  const totalImages = await (async () => {
+    const { db } = await import('../../lib/db.js');
+    return db.yandexImage.count();
+  })();
+
+  return {
+    variants,
+    regionId: region.yandexId,
+    resolvedGeoName: region.name,
+    imagesAvailable: totalImages,
   };
 }
 

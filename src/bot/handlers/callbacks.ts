@@ -264,11 +264,19 @@ export async function handleApply(ctx: SessionContext, approvalId: string): Prom
   await ctx.editMessageText('⏳ Применяю в Яндекс.Директ...');
 
   try {
+    // For network ads, look up the image hash chosen during generation.
+    let imageHash: string | undefined;
+    if (approval.campaignType === 'network') {
+      const v = variant as unknown as { selectedImageHash?: string | null };
+      if (v.selectedImageHash) imageHash = v.selectedImageHash;
+    }
+
     const result = await applyVariant({
       variant,
       campaignType: approval.campaignType as 'search' | 'network',
       regionId: approval.regionId,
       dailyBudget: approval.dailyBudget,
+      imageHash,
     });
 
     await db.approval.update({

@@ -9,7 +9,12 @@ import {
 } from '../command-parser.js';
 import { cplChoiceKeyboard, variantsKeyboard } from '../keyboards.js';
 import { formatVariantShort } from '../format.js';
-import { buildSearchCampaign, suggestCpl } from '../../services/ai/campaign-builder.js';
+import {
+  buildSearchCampaign,
+  buildNetworkCampaign,
+  suggestCpl,
+  type NetworkVariantWithImage,
+} from '../../services/ai/campaign-builder.js';
 import type { CampaignVariant } from '../../services/ai/prompts/search-campaign.js';
 
 /**
@@ -25,12 +30,6 @@ export async function handleCreateCampaign(ctx: SessionContext): Promise<void> {
     await ctx.reply('Не понял. Пример: `создай поиск гео:Краснодар бюджет:1500`', {
       parse_mode: 'Markdown',
     });
-    return;
-  }
-
-  // Phase 3 = search only. РСЯ comes in Phase 4.
-  if (parsed.kind === 'network') {
-    await ctx.reply('🚧 РСЯ-кампании — следующая фаза. Пока умею только Поиск.');
     return;
   }
 
@@ -101,14 +100,25 @@ async function startCplFlow(
   );
 }
 
-/** Called from callback after CPL is decided. */
+/** Called from callback after CPL is decided. Dispatches by kind. */
 export async function runGeneration(
   ctx: SessionContext,
   parsed: ParsedCreateCampaign & { geo: string; budget: number; brief: string },
   cpl: number
 ): Promise<void> {
-  const status = await ctx.reply('⏳ Анализирую город и подбираю ключевики через Wordstat...');
+  if (parsed.kind === 'network') {
+    await runNetworkGeneration(ctx, parsed, cpl);
+    return;
+  }
+  await runSearchGeneration(ctx, parsed, cpl);
+}
 
+async function runSearchGeneration(
+  ctx: SessionContext,
+  parsed: ParsedCreateCampaign & { geo: string; budget: number; brief: string },
+  cpl: number
+): Promise<void> {
+  const status = await ctx.reply('⏳ Анализирую город и подбираю ключевики через Wordstat...');
   try {
     await ctx.api.editMessageText(
       ctx.chat!.id,
@@ -125,7 +135,6 @@ export async function runGeneration(
       brief: parsed.brief,
     });
 
-    // Persist as Approval (24h TTL).
     const approval = await db.approval.create({
       data: {
         chatId: BigInt(ctx.chat!.id),
@@ -141,18 +150,15 @@ export async function runGeneration(
         expiresAt: new Date(Date.now() + 24 * 3600 * 1000),
       },
     });
-
-    // Reset session context — generation done.
     ctx.session.context = {};
     ctx.session.state = 'idle';
     ctx.session.pendingApprovalId = approval.id;
     await ctx.saveSession();
 
-    // Edit progress message → summary.
     const summary = [
-      `✅ Готово! 3 варианта поисковой кампании:`,
+      `✅ Готово! 3 варианта *поисковой* кампании:`,
       `📍 ${result.resolvedGeoName} · 💰 ${parsed.budget} ₽/день · 🎯 CPL ${cpl} ₽`,
-      `🔍 Wordstat: ${result.wordstatPhrasesUsed} фраз использовано`,
+      `🔍 Wordstat: ${result.wordstatPhrasesUsed} фраз`,
       '',
       ...result.variants.map((v, i) => `*${i + 1}.* ${formatVariantShort(v)}`),
       '',
@@ -165,11 +171,88 @@ export async function runGeneration(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    logger.error({ err }, 'campaign generation failed');
+    logger.error({ err }, 'search generation failed');
     await ctx.api.editMessageText(
       ctx.chat!.id,
       status.message_id,
       `❌ Не получилось сгенерировать: ${msg}`
+    );
+  }
+}
+
+async function runNetworkGeneration(
+  ctx: SessionContext,
+  parsed: ParsedCreateCampaign & { geo: string; budget: number; brief: string },
+  cpl: number
+): Promise<void> {
+  const status = await ctx.reply('⏳ Готовлю РСЯ — анализирую банк картинок и стратегии...');
+  try {
+    await ctx.api.editMessageText(
+      ctx.chat!.id,
+      status.message_id,
+      '⏳ Генерирую 3 варианта РСЯ через YandexGPT Pro...'
+    );
+
+    const result = await buildNetworkCampaign({
+      campaignType: 'network',
+      geo: parsed.geo,
+      dailyBudget: parsed.budget,
+      targetCpl: cpl,
+      siteUrl: parsed.url ?? config.BUSINESS_SITE,
+      brief: parsed.brief,
+    });
+
+    const approval = await db.approval.create({
+      data: {
+        chatId: BigInt(ctx.chat!.id),
+        status: 'pending',
+        campaignType: 'network',
+        geo: result.resolvedGeoName,
+        regionId: result.regionId,
+        dailyBudget: parsed.budget,
+        siteUrl: parsed.url ?? config.BUSINESS_SITE,
+        targetCpl: cpl,
+        cplSuggested: false,
+        variants: result.variants as unknown as object,
+        selectedImageHashes: result.variants
+          .map((v) => v.selectedImageHash)
+          .filter((h): h is string => h !== null),
+        expiresAt: new Date(Date.now() + 24 * 3600 * 1000),
+      },
+    });
+    ctx.session.context = {};
+    ctx.session.state = 'idle';
+    ctx.session.pendingApprovalId = approval.id;
+    await ctx.saveSession();
+
+    const summary = [
+      `✅ Готово! ${result.variants.length} вариант(ов) *РСЯ*:`,
+      `📍 ${result.resolvedGeoName} · 💰 ${parsed.budget} ₽/день · 🎯 CPL ${cpl} ₽`,
+      `🖼 В банке: ${result.imagesAvailable} картинок`,
+      '',
+      ...result.variants.map((v, i) => {
+        const imgInfo = v.selectedImageHash
+          ? `\n_🖼 картинка: ${(v.selectedImageDescription ?? v.selectedImageHash).slice(0, 60)}_`
+          : '\n_⚠️ без картинки (РСЯ работает слабее)_';
+        return `*${i + 1}.* ${formatVariantShort(v as unknown as CampaignVariant)}${imgInfo}`;
+      }),
+      '',
+      result.imagesAvailable === 0
+        ? '_💡 Подсказка: отправь картинки в чат, чтобы пополнить банк РСЯ._'
+        : 'Выбери вариант:',
+    ].join('\n\n');
+
+    await ctx.api.editMessageText(ctx.chat!.id, status.message_id, summary, {
+      parse_mode: 'Markdown',
+      reply_markup: variantsKeyboard(approval.id, result.variants as unknown as CampaignVariant[]),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ err }, 'network generation failed');
+    await ctx.api.editMessageText(
+      ctx.chat!.id,
+      status.message_id,
+      `❌ Не получилось сгенерировать РСЯ: ${msg}`
     );
   }
 }
