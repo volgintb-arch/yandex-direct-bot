@@ -6,7 +6,7 @@ export type SessionState =
   | 'idle'
   | 'awaiting_revision_text'
   | 'awaiting_cpl'
-  | 'awaiting_image'
+  | 'awaiting_image_for_network'
   | 'awaiting_image_caption';
 
 export interface SessionData {

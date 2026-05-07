@@ -20,7 +20,7 @@ interface GetAdImagesResponse {
 export async function listAdImages(): Promise<AdImageSummary[]> {
   const r = await direct<GetAdImagesResponse>('adimages', 'get', {
     SelectionCriteria: {},
-    FieldNames: ['AdImageHash', 'OriginalUrl', 'PreviewUrl', 'Name', 'Type', 'Subtype', 'AssociatedWith'],
+    FieldNames: ['AdImageHash', 'OriginalUrl', 'PreviewUrl', 'Name', 'Type', 'Subtype'],
   });
   return r.AdImages ?? [];
 }
@@ -28,13 +28,22 @@ export async function listAdImages(): Promise<AdImageSummary[]> {
 interface AddAdImagesResponse {
   AddResults: Array<{
     AdImageHash?: string;
-    Errors?: Array<{ Code: number; Message: string }>;
+    Errors?: Array<{ Code: number; Message: string; Details?: string }>;
+    Warnings?: Array<{ Code: number; Message: string; Details?: string }>;
   }>;
+}
+
+function formatAdImageErrors(errors?: Array<{ Code: number; Message: string; Details?: string }>): string {
+  if (!errors || errors.length === 0) return 'unknown';
+  return errors
+    .map((e) => `[${e.Code}] ${e.Message}${e.Details ? ' — ' + e.Details : ''}`)
+    .join('; ');
 }
 
 /**
  * Upload an image to the Direct account image bank.
  * `imageData` is base64-encoded image content.
+ * Direct accepts JPG/PNG/GIF, min 450×450 (REGULAR), max 10 MB.
  */
 export async function uploadAdImage(input: {
   imageBase64: string;
@@ -50,11 +59,28 @@ export async function uploadAdImage(input: {
   });
   const result = r.AddResults?.[0];
   if (!result?.AdImageHash) {
-    throw new Error(
-      `Failed to upload image: ${result?.Errors?.map((e) => e.Message).join('; ') ?? 'unknown'}`
-    );
+    throw new Error(`Failed to upload image: ${formatAdImageErrors(result?.Errors)}`);
   }
   return result.AdImageHash;
+}
+
+interface DeleteResponse {
+  DeleteResults: Array<{
+    AdImageHash?: string;
+    Errors?: Array<{ Code: number; Message: string; Details?: string }>;
+  }>;
+}
+
+/** Delete an image from the Direct account. Fails if image is in use. */
+export async function deleteAdImage(hash: string): Promise<void> {
+  const r = await direct<DeleteResponse>('adimages', 'delete', {
+    SelectionCriteria: { AdImageHashes: [hash] },
+  });
+  const result = r.DeleteResults?.[0];
+  if (result?.Errors && result.Errors.length > 0) {
+    const msg = result.Errors.map((e) => `[${e.Code}] ${e.Message}${e.Details ? ' — ' + e.Details : ''}`).join('; ');
+    throw new Error(`Failed to delete image: ${msg}`);
+  }
 }
 
 /**

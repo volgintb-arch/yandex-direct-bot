@@ -1,7 +1,6 @@
 import * as ygpt from './yandex-gpt.js';
 import * as wordstat from '../wordstat/client.js';
 import { findRegionByName, ensureRegionsCache } from '../yandex-direct/regions.js';
-import { findImagesForConcept } from '../yandex-direct/imageads.js';
 import { getKnowledgeContext } from '../knowledge/manager.js';
 import type { CampaignVariant } from './prompts/search-campaign.js';
 import { buildStrategiesPrompt, type StrategiesResponse } from './prompts/strategies.js';
@@ -147,14 +146,21 @@ export async function buildSearchCampaign(
   };
 }
 
+export interface BuildNetworkCampaignInput extends BuildCampaignInput {
+  /** Pre-chosen image — same one is used for all 3 variants. */
+  imageHash?: string | null;
+  imageDescription?: string | null;
+}
+
 /**
- * Multi-call РСЯ generation:
+ * Multi-call РСЯ generation. Image is chosen by user BEFORE generation
+ * (one image per request, applied to all 3 variants).
  *   1. Resolve geo + Wordstat seeds + knowledge in parallel
- *   2. Lite suggests 3 strategies tuned for РСЯ (broader, emotional)
- *   3. For each strategy: pick image candidates from bank → Pro generates ONE variant
+ *   2. Lite suggests 3 strategies tuned for РСЯ
+ *   3. 3 parallel Pro calls — each gets the same image description
  */
 export async function buildNetworkCampaign(
-  input: BuildCampaignInput
+  input: BuildNetworkCampaignInput
 ): Promise<BuildNetworkCampaignResult> {
   await ensureRegionsCache();
   const region = await findRegionByName(input.geo);
@@ -183,16 +189,8 @@ export async function buildNetworkCampaign(
     throw new ApiError('YandexGPT не предложил стратегий', 'campaign_builder');
   }
 
-  // For each strategy: pick image candidates relevant to its anchors,
-  // then ask Pro to generate a variant + select an image index.
+  // 3 parallel variant generations — all bound to the same chosen image.
   const variantPromises = strategies.map(async (strategy, idx) => {
-    const conceptText = `${strategy.name} ${strategy.focus} ${strategy.anchor_keywords.join(' ')}`;
-    const imageCandidates = await findImagesForConcept(conceptText, 6);
-    const indexedCandidates = imageCandidates.map((img, i) => ({
-      index: i,
-      description: img.description,
-    }));
-
     const { system, prompt } = buildNetworkVariantPrompt({
       geo: region.name,
       dailyBudget: input.dailyBudget,
@@ -200,7 +198,7 @@ export async function buildNetworkCampaign(
       siteUrl: input.siteUrl,
       brief: input.brief,
       strategy,
-      imageCandidates: indexedCandidates,
+      imageDescription: input.imageDescription ?? null,
       learnedRules: knowledge.rules,
       topAdsExamples: knowledge.topAds,
     });
@@ -216,16 +214,14 @@ export async function buildNetworkCampaign(
         logger.warn({ strategy: strategy.name }, 'network variant missing fields');
         return null;
       }
-      const chosenIdx = typeof resp.selected_image_index === 'number' ? resp.selected_image_index : -1;
-      const chosen = chosenIdx >= 0 && chosenIdx < imageCandidates.length ? imageCandidates[chosenIdx] : null;
 
       let variant: NetworkVariantWithImage = {
         variant_id: `v${idx + 1}`,
         title: resp.title,
         strategy_explanation: resp.strategy_explanation,
         draft: resp.draft,
-        selectedImageHash: chosen?.hash ?? null,
-        selectedImageDescription: chosen?.description ?? null,
+        selectedImageHash: input.imageHash ?? null,
+        selectedImageDescription: input.imageDescription ?? null,
       };
 
       const violations = validateVariant(variant);

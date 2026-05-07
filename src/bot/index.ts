@@ -12,8 +12,14 @@ import { handleStart, handleHelp } from './handlers/start.js';
 import { handleHealth } from './handlers/health.js';
 import { handleGrant, handleRevoke, handleUsers } from './handlers/grant.js';
 import { handleCreateCampaign } from './handlers/create-campaign.js';
-import { handleUploadImage } from './handlers/upload-image.js';
-import { handleSyncImages, handleListImages } from './handlers/images.js';
+import { handleUploadImage, handleUploadDocument } from './handlers/upload-image.js';
+import {
+  handleSyncImages,
+  handleListImages,
+  handleDeleteImage,
+  handleRenameImage,
+  handleRenameText,
+} from './handlers/images.js';
 import {
   handleCplAi,
   handleCplAccept,
@@ -26,6 +32,11 @@ import {
   handleApply,
   handleShrink,
   handleRevisionText,
+  handleImgUpload,
+  handleImgBank,
+  handleImgBack,
+  handleImgPick,
+  handleImgSkip,
 } from './handlers/callbacks.js';
 
 export const bot = new Bot<SessionContext>(config.TELEGRAM_BOT_TOKEN);
@@ -88,6 +99,27 @@ bot.on('callback_query:data', async (ctx) => {
       case 'shrink':
         if (arg1) await handleShrink(ctx, arg1);
         break;
+      case 'img_upload':
+        await handleImgUpload(ctx);
+        break;
+      case 'img_bank':
+        await handleImgBank(ctx);
+        break;
+      case 'img_back':
+        await handleImgBack(ctx);
+        break;
+      case 'img_pick':
+        if (arg1) await handleImgPick(ctx, arg1);
+        break;
+      case 'img_skip':
+        await handleImgSkip(ctx);
+        break;
+      case 'img_del':
+        if (arg1) await handleDeleteImage(ctx, arg1);
+        break;
+      case 'img_rename':
+        if (arg1) await handleRenameImage(ctx, arg1);
+        break;
       case 'reject':
         if (arg1) await handleReject(ctx, arg1);
         break;
@@ -100,8 +132,9 @@ bot.on('callback_query:data', async (ctx) => {
   }
 });
 
-// ─── Photo messages → image bank ──────────────────────────────────────
+// ─── Photo / document messages → image bank ──────────────────────────
 bot.on('message:photo', handleUploadImage);
+bot.on('message:document', handleUploadDocument);
 
 // ─── Free-form text messages ──────────────────────────────────────────
 // Order matters: state-machine handlers > intent detection > unknown.
@@ -117,6 +150,11 @@ bot.on('message:text', async (ctx) => {
   // 2. State-machine: awaiting revision text?
   if (ctx.session.state === 'awaiting_revision_text') {
     await handleRevisionText(ctx, text);
+    return;
+  }
+  // 2b. State-machine: awaiting image rename text?
+  if (ctx.session.state === 'awaiting_image_caption') {
+    await handleRenameText(ctx, text);
     return;
   }
 

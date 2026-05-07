@@ -7,8 +7,8 @@ import {
   missingFields,
   type ParsedCreateCampaign,
 } from '../command-parser.js';
-import { cplChoiceKeyboard, variantsKeyboard } from '../keyboards.js';
-import { formatVariantShort } from '../format.js';
+import { cplChoiceKeyboard, variantsKeyboard, imageRequestKeyboard } from '../keyboards.js';
+import { formatVariantShort, escapeMd } from '../format.js';
 import {
   buildSearchCampaign,
   buildNetworkCampaign,
@@ -39,8 +39,50 @@ export async function handleCreateCampaign(ctx: SessionContext): Promise<void> {
     return;
   }
 
-  // Everything provided → CPL flow
+  // For РСЯ — ask for image FIRST (one image per request, applied to all 3 variants).
+  // Only THEN go into CPL flow.
+  if (parsed.kind === 'network') {
+    await startImageFlow(ctx, parsed as Required<Pick<ParsedCreateCampaign, 'geo' | 'budget' | 'brief'>> & ParsedCreateCampaign);
+    return;
+  }
+
+  // Search → straight to CPL
   await startCplFlow(ctx, parsed as Required<Pick<ParsedCreateCampaign, 'geo' | 'budget' | 'brief'>> & ParsedCreateCampaign);
+}
+
+/** Persist parsed command on session and ask user how to source the image. */
+async function startImageFlow(
+  ctx: SessionContext,
+  parsed: ParsedCreateCampaign & { geo: string; budget: number; brief: string }
+): Promise<void> {
+  const { db } = await import('../../lib/db.js');
+  const bankSize = await db.yandexImage.count();
+
+  ctx.session.context = {
+    ...ctx.session.context,
+    pendingCommand: {
+      kind: parsed.kind,
+      geo: parsed.geo,
+      budget: parsed.budget,
+      brief: parsed.brief,
+      url: parsed.url ?? config.BUSINESS_SITE,
+      cpl: parsed.cpl ?? null,
+    },
+  };
+  await ctx.saveSession();
+
+  const lines = [
+    '*🖼 Какой визуал использовать для РСЯ?*',
+    '_Одна картинка будет применена ко всем 3 вариантам объявлений._',
+    '',
+    bankSize > 0
+      ? `В банке: ${bankSize} картинок.`
+      : '_Банк пуст. Можешь загрузить новую или создать без картинки._',
+  ];
+  await ctx.reply(lines.join('\n'), {
+    parse_mode: 'Markdown',
+    reply_markup: imageRequestKeyboard(bankSize),
+  });
 }
 
 async function askForMissing(
@@ -185,7 +227,15 @@ async function runNetworkGeneration(
   parsed: ParsedCreateCampaign & { geo: string; budget: number; brief: string },
   cpl: number
 ): Promise<void> {
-  const status = await ctx.reply('⏳ Готовлю РСЯ — анализирую банк картинок и стратегии...');
+  const imageHash = (ctx.session.context.imageHash as string | null | undefined) ?? null;
+  const imageDescription =
+    (ctx.session.context.imageDescription as string | null | undefined) ?? null;
+
+  const status = await ctx.reply(
+    imageHash
+      ? '⏳ Готовлю РСЯ с твоей картинкой...'
+      : '⏳ Готовлю РСЯ (без картинки)...'
+  );
   try {
     await ctx.api.editMessageText(
       ctx.chat!.id,
@@ -200,6 +250,8 @@ async function runNetworkGeneration(
       targetCpl: cpl,
       siteUrl: parsed.url ?? config.BUSINESS_SITE,
       brief: parsed.brief,
+      imageHash,
+      imageDescription,
     });
 
     const approval = await db.approval.create({
@@ -231,9 +283,14 @@ async function runNetworkGeneration(
       `🖼 В банке: ${result.imagesAvailable} картинок`,
       '',
       ...result.variants.map((v, i) => {
+        const imgLabel = v.selectedImageDescription
+          ? v.selectedImageDescription.slice(0, 60)
+          : v.selectedImageHash
+            ? `файл #${v.selectedImageHash.slice(0, 8)}`
+            : '';
         const imgInfo = v.selectedImageHash
-          ? `\n_🖼 картинка: ${(v.selectedImageDescription ?? v.selectedImageHash).slice(0, 60)}_`
-          : '\n_⚠️ без картинки (РСЯ работает слабее)_';
+          ? `\n🖼 ${escapeMd(imgLabel)}`
+          : '\n⚠️ без картинки';
         return `*${i + 1}.* ${formatVariantShort(v as unknown as CampaignVariant)}${imgInfo}`;
       }),
       '',

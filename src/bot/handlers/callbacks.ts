@@ -9,6 +9,7 @@ import { suggestCpl, shrinkVariant, reviseVariant } from '../../services/ai/camp
 import { runGeneration } from './create-campaign.js';
 import type { CampaignVariant } from '../../services/ai/prompts/search-campaign.js';
 import { variantHasIssues } from '../../services/ai/validate.js';
+import { bankImagesKeyboard, imageRequestKeyboard } from '../keyboards.js';
 
 interface PendingCommand {
   kind: 'search' | 'network';
@@ -16,6 +17,7 @@ interface PendingCommand {
   budget: number;
   brief: string;
   url: string;
+  cpl?: number;
 }
 
 /** Find variant by id within an approval. */
@@ -34,7 +36,141 @@ function getPendingCommand(ctx: SessionContext): PendingCommand | null {
     budget: pc.budget,
     brief: pc.brief,
     url: pc.url ?? config.BUSINESS_SITE,
+    ...(pc.cpl ? { cpl: pc.cpl } : {}),
   };
+}
+
+/* ─── Image flow (РСЯ) ─────────────────────────────────────────────── */
+
+/** User chose to upload a fresh image — wait for the next photo. */
+export async function handleImgUpload(ctx: SessionContext): Promise<void> {
+  const cmd = getPendingCommand(ctx);
+  if (!cmd) {
+    await ctx.answerCallbackQuery({ text: 'Сессия истекла' });
+    return;
+  }
+  ctx.session.state = 'awaiting_image_for_network';
+  await ctx.saveSession();
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(
+    [
+      '📤 *Жду картинку для РСЯ.*',
+      '',
+      '*Важно:* отправь *файлом*, не как фото — Telegram сжимает фото и Директ может отклонить.',
+      '`📎 → Файл → выбрать картинку → Отправить`',
+      '',
+      '_Поддерживается JPG, PNG, GIF. Минимум 450×450 пикселей._',
+    ].join('\n'),
+    { parse_mode: 'Markdown' }
+  );
+}
+
+/** User chose "from bank" — show carousel of bank images. */
+export async function handleImgBank(ctx: SessionContext): Promise<void> {
+  const cmd = getPendingCommand(ctx);
+  if (!cmd) {
+    await ctx.answerCallbackQuery({ text: 'Сессия истекла' });
+    return;
+  }
+  const images = await db.yandexImage.findMany({
+    orderBy: [{ description: { sort: 'desc', nulls: 'last' } }, { syncedAt: 'desc' }],
+    take: 12,
+    select: { hash: true, description: true, name: true },
+  });
+  if (images.length === 0) {
+    await ctx.answerCallbackQuery({ text: 'Банк пуст' });
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(
+    `*🗂 Выбери картинку из банка (${images.length}):*`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: bankImagesKeyboard(images),
+    }
+  );
+}
+
+/** Back from bank list to image source choice. */
+export async function handleImgBack(ctx: SessionContext): Promise<void> {
+  const cmd = getPendingCommand(ctx);
+  if (!cmd) {
+    await ctx.answerCallbackQuery({ text: 'Сессия истекла' });
+    return;
+  }
+  const bankSize = await db.yandexImage.count();
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(
+    [
+      '*🖼 Какой визуал использовать для РСЯ?*',
+      '_Одна картинка будет применена ко всем 3 вариантам объявлений._',
+      '',
+      bankSize > 0 ? `В банке: ${bankSize} картинок.` : '_Банк пуст._',
+    ].join('\n'),
+    { parse_mode: 'Markdown', reply_markup: imageRequestKeyboard(bankSize) }
+  );
+}
+
+/** User picked an image from the bank by hash. */
+export async function handleImgPick(ctx: SessionContext, hash: string): Promise<void> {
+  const cmd = getPendingCommand(ctx);
+  if (!cmd) {
+    await ctx.answerCallbackQuery({ text: 'Сессия истекла' });
+    return;
+  }
+  const img = await db.yandexImage.findUnique({ where: { hash } });
+  if (!img) {
+    await ctx.answerCallbackQuery({ text: 'Картинка не найдена' });
+    return;
+  }
+  ctx.session.context = {
+    ...ctx.session.context,
+    imageHash: hash,
+    imageDescription: img.description ?? img.name ?? null,
+  };
+  await ctx.saveSession();
+  await ctx.answerCallbackQuery({ text: 'Картинка выбрана' });
+  await ctx.deleteMessage().catch(() => {});
+  await proceedToCpl(ctx, cmd);
+}
+
+/** User chose to skip image — РСЯ without visual (weaker but works). */
+export async function handleImgSkip(ctx: SessionContext): Promise<void> {
+  const cmd = getPendingCommand(ctx);
+  if (!cmd) {
+    await ctx.answerCallbackQuery({ text: 'Сессия истекла' });
+    return;
+  }
+  ctx.session.context = {
+    ...ctx.session.context,
+    imageHash: null,
+    imageDescription: null,
+  };
+  await ctx.saveSession();
+  await ctx.answerCallbackQuery({ text: 'Без картинки' });
+  await ctx.deleteMessage().catch(() => {});
+  await proceedToCpl(ctx, cmd);
+}
+
+/** After image is decided — go to CPL flow (or run generation if CPL provided). */
+async function proceedToCpl(ctx: SessionContext, cmd: PendingCommand): Promise<void> {
+  // If CPL was already in the original command — skip ahead.
+  if (cmd.cpl && cmd.cpl > 0) {
+    await runGeneration(ctx, cmd, cmd.cpl);
+    return;
+  }
+  const { cplChoiceKeyboard } = await import('../keyboards.js');
+  await ctx.reply(
+    `*Целевой CPL для кампании "${cmd.geo}" не указан.*\nКак определить?`,
+    { parse_mode: 'Markdown', reply_markup: cplChoiceKeyboard('pending') }
+  );
+}
+
+/** Called by upload-image handler after image is bound to session. */
+export async function proceedAfterImage(ctx: SessionContext): Promise<void> {
+  const cmd = getPendingCommand(ctx);
+  if (!cmd) return;
+  await proceedToCpl(ctx, cmd);
 }
 
 /* ─── CPL flow ─────────────────────────────────────────────────────── */
@@ -304,6 +440,11 @@ export async function handleApply(ctx: SessionContext, approvalId: string): Prom
       `   ID \`${result.adgroupId}\``,
       result.keywordsAdded ? `🔑 Ключевиков добавлено: ${result.keywordsAdded}` : '',
       `📝 Объявление ID \`${result.adId}\` — отправлено на модерацию`,
+      approval.campaignType === 'network' && imageHash
+        ? result.imageAttached
+          ? '🖼 Картинка прикреплена'
+          : '⚠️ Картинка не прикреплена (Direct отверг формат — добавь вручную в кабинете)'
+        : '',
     ]
       .filter(Boolean)
       .join('\n');

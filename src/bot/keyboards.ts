@@ -45,3 +45,32 @@ export function cplSuggestionKeyboard(approvalId: string): InlineKeyboard {
     .text('✅ Принять', `cpl_accept|${approvalId}`)
     .text('✍️ Ввести своё', `cpl_manual|${approvalId}`);
 }
+
+/** РСЯ image-source choice for a new campaign. */
+export function imageRequestKeyboard(bankSize: number): InlineKeyboard {
+  const kb = new InlineKeyboard().text('📤 Загрузить картинку', 'img_upload').row();
+  if (bankSize > 0) {
+    kb.text(`🗂 Из банка (${bankSize})`, 'img_bank').row();
+  }
+  return kb.text('➡️ Без картинки', 'img_skip');
+}
+
+/** Carousel of bank images for selection (one button per image, by hash). */
+export function bankImagesKeyboard(
+  images: Array<{ hash: string; description: string | null; name: string | null }>
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const img of images.slice(0, 12)) {
+    const label = (img.description ?? img.name ?? img.hash).slice(0, 40);
+    kb.text(label, `img_pick|${img.hash}`).row();
+  }
+  kb.text('↩️ Назад', 'img_back');
+  return kb;
+}
+
+/** Per-image actions (view / rename / delete) in /images management. */
+export function imageManageKeyboard(hash: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text('✏️ Переименовать', `img_rename|${hash}`)
+    .text('🗑 Удалить', `img_del|${hash}`);
+}

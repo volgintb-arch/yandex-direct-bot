@@ -35,8 +35,25 @@ export async function listAds(filter: {
   return r.Ads ?? [];
 }
 
+interface DirectError {
+  Code: number;
+  Message: string;
+  Details?: string;
+}
+
 interface AddAdsResponse {
-  AddResults: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }>;
+  AddResults: Array<{
+    Id?: number;
+    Errors?: DirectError[];
+    Warnings?: DirectError[];
+  }>;
+}
+
+function formatErrors(errors?: DirectError[]): string {
+  if (!errors || errors.length === 0) return 'unknown';
+  return errors
+    .map((e) => `[${e.Code}] ${e.Message}${e.Details ? ' — ' + e.Details : ''}`)
+    .join('; ');
 }
 
 export interface CreateTextAdInput {
@@ -63,9 +80,7 @@ export async function createTextAd(input: CreateTextAdInput): Promise<number> {
   });
   const result = r.AddResults?.[0];
   if (!result?.Id) {
-    throw new Error(
-      `Failed to create ad: ${result?.Errors?.map((e) => e.Message).join('; ') ?? 'unknown'}`
-    );
+    throw new Error(`Failed to create ad: ${formatErrors(result?.Errors)}`);
   }
   return result.Id;
 }
@@ -91,9 +106,7 @@ export async function createTextImageAd(input: CreateTextImageAdInput): Promise<
   });
   const result = r.AddResults?.[0];
   if (!result?.Id) {
-    throw new Error(
-      `Failed to create text-image ad: ${result?.Errors?.map((e) => e.Message).join('; ') ?? 'unknown'}`
-    );
+    throw new Error(`Failed to create text-image ad: ${formatErrors(result?.Errors)}`);
   }
   return result.Id;
 }

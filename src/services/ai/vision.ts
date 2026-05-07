@@ -13,7 +13,9 @@ import { ApiError } from '../../lib/errors.js';
 const VISION_ENDPOINT =
   'https://llm.api.cloud.yandex.net/foundationModels/v1/completion';
 
-const VISION_MODEL = 'gemma3-27b-it/latest'; // adjust if Yandex publishes a different URI
+// Yandex AI Studio multimodal model URI. If the model is unavailable, vision
+// is skipped (best-effort) and the image is saved without an AI description.
+const VISION_MODEL = 'gemma-3-27b-it/latest';
 
 const SYSTEM_PROMPT = `Ты — копирайтер. Опиши картинку для базы рекламных креативов.
 

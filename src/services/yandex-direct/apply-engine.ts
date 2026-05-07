@@ -13,6 +13,8 @@ export interface ApplyResult {
   adgroupCreated: boolean;
   adId: bigint;
   keywordsAdded: number;
+  /** True when image was successfully attached (only relevant for РСЯ). */
+  imageAttached: boolean;
 }
 
 export interface ApplyInput {
@@ -87,23 +89,45 @@ export async function applyVariant(input: ApplyInput): Promise<ApplyResult> {
   }
 
   // 3. Ad: always create new.
-  const adId = imageHash
-    ? await createTextImageAd({
+  // For РСЯ with image — try TextImageAd first; if Direct rejects the image
+  // ([6000] "Размер не соответствует типу"), fall back to plain TextAd so
+  // the campaign isn't blocked. User can attach image manually in the cabinet.
+  let adId: number;
+  let imageAttached = false;
+  if (imageHash) {
+    try {
+      adId = await createTextImageAd({
         adgroupId,
         title1: draft.ad.title1,
         title2: draft.ad.title2,
         text: draft.ad.text,
         href: draft.ad.url,
         adImageHash: imageHash,
-      })
-    : await createTextAd({
+      });
+      imageAttached = true;
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err), imageHash },
+        'TextImageAd failed — falling back to TextAd without image'
+      );
+      adId = await createTextAd({
         adgroupId,
         title1: draft.ad.title1,
         title2: draft.ad.title2,
         text: draft.ad.text,
         href: draft.ad.url,
       });
-  logger.info({ id: adId }, 'created ad');
+    }
+  } else {
+    adId = await createTextAd({
+      adgroupId,
+      title1: draft.ad.title1,
+      title2: draft.ad.title2,
+      text: draft.ad.text,
+      href: draft.ad.url,
+    });
+  }
+  logger.info({ id: adId, imageAttached }, 'created ad');
 
   // 4. Mirror to local DB for tracking.
   await mirrorToDb({
@@ -126,6 +150,7 @@ export async function applyVariant(input: ApplyInput): Promise<ApplyResult> {
     adgroupCreated,
     adId: BigInt(adId),
     keywordsAdded,
+    imageAttached,
   };
 }
 

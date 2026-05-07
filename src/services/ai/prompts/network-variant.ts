@@ -8,8 +8,8 @@ export interface BuildNetworkVariantPromptInput {
   siteUrl: string;
   brief: string;
   strategy: StrategyIdea;
-  /** Optional: image candidates the AI can pick from (description-based). */
-  imageCandidates?: Array<{ index: number; description: string | null }>;
+  /** Description of the chosen image (or null = no image / not described). */
+  imageDescription?: string | null;
   learnedRules?: string | null;
   topAdsExamples?: Array<{ title1: string; title2?: string; text: string; ctr: number }>;
 }
@@ -30,11 +30,9 @@ export function buildNetworkVariantPrompt(input: BuildNetworkVariantPromptInput)
   system: string;
   prompt: string;
 } {
-  const imagesBlock = input.imageCandidates?.length
-    ? `\n=== КАРТИНКИ ИЗ БАНКА (выбери индекс или -1 если ни одна не подходит) ===\n${input.imageCandidates
-        .map((img) => `  [${img.index}] ${img.description ?? '(без описания)'}`)
-        .join('\n')}\n`
-    : '\n=== КАРТИНКИ ===\nБанк пуст. Используй selected_image_index = -1.\n';
+  const imageBlock = input.imageDescription
+    ? `\n=== ВИЗУАЛ К ОБЪЯВЛЕНИЮ ===\n${input.imageDescription}\nПодстрой текст под этот визуал — заголовок и текст должны сочетаться с тем что видно на картинке.\n`
+    : '\n=== ВИЗУАЛ ===\nКартинки нет. Текст должен сам по себе цеплять внимание.\n';
 
   const rulesBlock = input.learnedRules?.trim()
     ? `\nВыученные правила:\n${input.learnedRules.trim()}\n`
@@ -67,7 +65,7 @@ ${input.brief.trim()}
 Название: ${input.strategy.name}
 Угол: ${input.strategy.focus}
 Тематические якоря: ${input.strategy.anchor_keywords.join(', ')}
-${imagesBlock}${rulesBlock}${topAdsBlock}
+${imageBlock}${rulesBlock}${topAdsBlock}
 === ТРЕБОВАНИЯ ===
 - Имя кампании: «${input.geo}-РСЯ»
 - Имя группы: «${input.strategy.name}»
@@ -85,7 +83,6 @@ ${imagesBlock}${rulesBlock}${topAdsBlock}
   "variant_id": "vX",
   "title": "${input.strategy.name}",
   "strategy_explanation": "1-2 предложения зачем",
-  "selected_image_index": <индекс из банка или -1>,
   "draft": {
     "campaign_name": "${input.geo}-РСЯ",
     "adgroup_name": "${input.strategy.name}",
@@ -102,12 +99,11 @@ ${imagesBlock}${rulesBlock}${topAdsBlock}
   return { system: SYSTEM, prompt };
 }
 
-/** Variant returned by network builder; extends search variant with image choice. */
+/** Variant returned by network builder. Image is bound externally per request. */
 export interface NetworkVariantResponse {
   variant_id: string;
   title: string;
   strategy_explanation: string;
-  selected_image_index: number;
   draft: {
     campaign_name: string;
     adgroup_name: string;
