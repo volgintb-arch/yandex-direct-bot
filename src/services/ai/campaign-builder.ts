@@ -2,9 +2,13 @@ import * as ygpt from './yandex-gpt.js';
 import * as wordstat from '../wordstat/client.js';
 import { findRegionByName, ensureRegionsCache } from '../yandex-direct/regions.js';
 import { getKnowledgeContext } from '../knowledge/manager.js';
-import { buildSearchPrompt, type CampaignVariantsResponse, type CampaignVariant } from './prompts/search-campaign.js';
+import type { CampaignVariant } from './prompts/search-campaign.js';
+import { buildStrategiesPrompt, type StrategiesResponse } from './prompts/strategies.js';
+import { buildSearchVariantPrompt } from './prompts/search-variant.js';
 import { buildCplPrompt, type CplSuggestion } from './prompts/cpl-suggestion.js';
 import { buildRevisionPrompt } from './prompts/revision.js';
+import { buildShrinkPrompt } from './prompts/shrink.js';
+import { validateVariant } from './validate.js';
 import { logger } from '../../lib/logger.js';
 import { ApiError } from '../../lib/errors.js';
 
@@ -25,11 +29,12 @@ export interface BuildCampaignResult {
 }
 
 /**
- * End-to-end Search campaign generation:
- *   1. Resolve geo → Yandex region ID (cached)
- *   2. Pull top phrases from Wordstat for that region
- *   3. Pull knowledge context (learned rules, top ads, failures)
- *   4. Ask YandexGPT Pro for 3 variants
+ * Multi-call generation for reliability:
+ *   1. Resolve geo + pull Wordstat + knowledge in parallel
+ *   2. YandexGPT Lite suggests 3 distinct strategies
+ *   3. YandexGPT Pro generates ONE variant per strategy in parallel
+ *
+ * Single big-prompt approaches kept truncating the JSON.
  */
 export async function buildSearchCampaign(
   input: BuildCampaignInput
@@ -41,73 +46,157 @@ export async function buildSearchCampaign(
   }
 
   const [wordstatResp, knowledge] = await Promise.all([
-    safeWordstat(input.brief, input.geo, region.yandexId),
+    safeWordstat(input.brief, region.yandexId),
     getKnowledgeContext({ scope: 'search', city: region.name }),
   ]);
 
-  const { system, prompt } = buildSearchPrompt({
+  // Step 1: 3 strategies via Lite (cheap + fast).
+  const stratPrompt = buildStrategiesPrompt({
     geo: region.name,
-    dailyBudget: input.dailyBudget,
-    targetCpl: input.targetCpl,
-    siteUrl: input.siteUrl,
     brief: input.brief,
     wordstatTop: wordstatResp,
-    learnedRules: knowledge.rules,
-    topAdsExamples: knowledge.topAds,
-    failurePatterns: knowledge.failures,
+  });
+  const strategiesResp = await ygpt.generateJson<StrategiesResponse>('lite', {
+    prompt: stratPrompt.prompt,
+    system: stratPrompt.system,
+    temperature: 0.8,
+    maxTokens: 2000,
+  });
+  const strategies = strategiesResp.strategies?.slice(0, 3) ?? [];
+  if (strategies.length === 0) {
+    throw new ApiError('YandexGPT не предложил ни одной стратегии', 'campaign_builder');
+  }
+  logger.info({ count: strategies.length, strategies: strategies.map((s) => s.name) }, 'strategies suggested');
+
+  // Step 2: 3 parallel variant generations via Pro.
+  const variantPromises = strategies.map(async (strategy, idx) => {
+    const { system, prompt } = buildSearchVariantPrompt({
+      geo: region.name,
+      dailyBudget: input.dailyBudget,
+      targetCpl: input.targetCpl,
+      siteUrl: input.siteUrl,
+      brief: input.brief,
+      strategy,
+      wordstatTop: wordstatResp,
+      learnedRules: knowledge.rules,
+      topAdsExamples: knowledge.topAds,
+    });
+    try {
+      let variant = await ygpt.generateJson<CampaignVariant>('pro', {
+        prompt,
+        system,
+        temperature: 0.7,
+        maxTokens: 5000,
+      });
+      // Validate structure — model sometimes drops fields.
+      if (!isWellFormedVariant(variant)) {
+        logger.warn({ strategy: strategy.name, got: Object.keys(variant ?? {}) }, 'variant missing fields');
+        return null;
+      }
+      variant = { ...variant, variant_id: `v${idx + 1}` };
+      // Auto-shrink once if model exceeded char limits.
+      const violations = validateVariant(variant);
+      if (violations.length > 0) {
+        logger.info(
+          { strategy: strategy.name, violations: violations.map((v) => `${v.field} ${v.current}/${v.max}`) },
+          'variant violates limits — auto-shrinking'
+        );
+        try {
+          variant = await shrinkVariant(variant);
+        } catch (err) {
+          logger.warn({ err }, 'auto-shrink failed, returning original');
+        }
+      }
+      return variant;
+    } catch (err) {
+      logger.warn({ err, strategy: strategy.name }, 'variant generation failed');
+      return null;
+    }
   });
 
-  const json = await ygpt.generateJson<CampaignVariantsResponse>('pro', {
-    prompt,
-    system,
-    temperature: 0.7,
-    maxTokens: 6000,
-  });
-
-  if (!json.variants || json.variants.length === 0) {
-    throw new ApiError('YandexGPT не вернул ни одного варианта', 'campaign_builder');
+  const variants = (await Promise.all(variantPromises)).filter(
+    (v): v is CampaignVariant => v !== null
+  );
+  if (variants.length === 0) {
+    throw new ApiError('Не удалось сгенерировать ни одного варианта', 'campaign_builder');
   }
 
   return {
-    variants: json.variants,
+    variants,
     regionId: region.yandexId,
     resolvedGeoName: region.name,
     wordstatPhrasesUsed: wordstatResp.length,
   };
 }
 
-/** Pick a seed phrase from brief for Wordstat — first noun-ish word. */
-function pickSeedPhrase(brief: string, geo: string): string {
-  // Very rough: take first meaningful 1-3 words from brief.
-  const cleaned = brief
-    .toLowerCase()
-    .replace(/[^а-яa-z0-9\s]/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const words = cleaned.split(' ').filter((w) => w.length > 3).slice(0, 2);
-  if (words.length > 0) return `${words.join(' ')} ${geo.toLowerCase()}`;
-  return `квест ${geo.toLowerCase()}`;
+function isWellFormedVariant(v: unknown): v is CampaignVariant {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  const draft = r.draft as Record<string, unknown> | undefined;
+  if (!draft) return false;
+  const ad = draft.ad as Record<string, unknown> | undefined;
+  if (!ad) return false;
+  return (
+    typeof ad.title1 === 'string' &&
+    typeof ad.text === 'string' &&
+    typeof draft.campaign_name === 'string' &&
+    Array.isArray(draft.keywords)
+  );
+}
+
+/**
+ * Wordstat seeds: combine our core business keyword with one secondary
+ * topic keyword pulled from the brief (if any).
+ */
+function pickSeeds(brief: string): string[] {
+  const seeds = ['квест'];
+  const briefLower = brief.toLowerCase();
+  const triggers: Array<{ contains: string; seed: string }> = [
+    { contains: 'день рождения', seed: 'квест день рождения' },
+    { contains: 'корпоратив', seed: 'квест корпоратив' },
+    { contains: 'тимбилдинг', seed: 'тимбилдинг' },
+    { contains: 'выпускной', seed: 'квест выпускной' },
+    { contains: 'девичник', seed: 'квест девичник' },
+    { contains: 'мальчишник', seed: 'квест мальчишник' },
+    { contains: 'для детей', seed: 'детский квест' },
+    { contains: 'для подростков', seed: 'квест для подростков' },
+    { contains: 'хоррор', seed: 'хоррор квест' },
+    { contains: 'пират', seed: 'квест пираты' },
+  ];
+  for (const t of triggers) {
+    if (briefLower.includes(t.contains) && !seeds.includes(t.seed)) {
+      seeds.push(t.seed);
+      if (seeds.length >= 2) break;
+    }
+  }
+  return seeds;
 }
 
 async function safeWordstat(
   brief: string,
-  geo: string,
   regionId: number
 ): Promise<Array<{ phrase: string; count: number }>> {
-  try {
-    const seed = pickSeedPhrase(brief, geo);
-    const r = await wordstat.getTopRequests(seed, [regionId]);
-    return r.topRequests ?? [];
-  } catch (err) {
-    logger.warn({ err, geo }, 'wordstat failed, continuing without it');
-    return [];
+  const seeds = pickSeeds(brief);
+  const all = new Map<string, number>();
+  for (const seed of seeds) {
+    try {
+      const r = await wordstat.getTopRequests(seed, [regionId]);
+      for (const item of r.topRequests ?? []) {
+        if (!all.has(item.phrase) || all.get(item.phrase)! < item.count) {
+          all.set(item.phrase, item.count);
+        }
+      }
+    } catch (err) {
+      logger.warn({ err, seed }, 'wordstat seed failed, continuing');
+    }
   }
+  return Array.from(all.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 30)
+    .map(([phrase, count]) => ({ phrase, count }));
 }
 
-/**
- * Suggest target CPL using AI based on business profile, city and brief.
- * Used when user picks "💡 Пусть ИИ предложит" instead of entering manually.
- */
+/** Suggest target CPL using AI based on business profile, city and brief. */
 export async function suggestCpl(input: {
   campaignType: 'search' | 'network';
   geo: string;
@@ -140,4 +229,19 @@ export async function reviseVariant(
     temperature: 0.4,
     maxTokens: 4000,
   });
+}
+
+/** Ask AI to shrink fields that exceed Direct char limits. */
+export async function shrinkVariant(variant: CampaignVariant): Promise<CampaignVariant> {
+  const violations = validateVariant(variant);
+  if (violations.length === 0) return variant;
+  const { system, prompt } = buildShrinkPrompt(variant, violations);
+  const updated = await ygpt.generateJson<CampaignVariant>('pro', {
+    prompt,
+    system,
+    temperature: 0.3,
+    maxTokens: 2000,
+  });
+  // Preserve variant_id which model may regenerate
+  return { ...updated, variant_id: variant.variant_id };
 }

@@ -11,11 +11,21 @@ export function variantsKeyboard(approvalId: string, variants: CampaignVariant[]
   return kb;
 }
 
-/** After variant selected — apply / revise / reject. */
-export function variantActionsKeyboard(approvalId: string): InlineKeyboard {
-  return new InlineKeyboard()
-    .text('✅ Применить в Директ', `apply|${approvalId}`)
-    .row()
+/**
+ * After variant selected — apply / revise / reject.
+ * If `hasViolations`, primary button is "shrink" instead of "apply".
+ */
+export function variantActionsKeyboard(
+  approvalId: string,
+  hasViolations = false
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  if (hasViolations) {
+    kb.text('✂️ Сократить через ИИ', `shrink|${approvalId}`).row();
+  } else {
+    kb.text('✅ Применить в Директ', `apply|${approvalId}`).row();
+  }
+  return kb
     .text('✏️ Изменить', `revise|${approvalId}`)
     .text('🔄 Сменить вариант', `back|${approvalId}`)
     .row()

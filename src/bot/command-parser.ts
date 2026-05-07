@@ -21,62 +21,96 @@ export interface ParsedCreateCampaign {
   brief?: string;
 }
 
-const TYPE_PATTERN = /(?:^|\s)(?:создай(?:те)?|создать|create|сделай)\s+(поиск(?:ов\w*)?|search|рся|rsya|network|сеть)/i;
+const KIND_REGEX = /(?:создай(?:те)?|создать|create|сделай)\s+(поиск\S*|search|рся|rsya|network|сеть)/i;
 
-const FIELDS: Array<{ key: keyof ParsedCreateCampaign; aliases: string[] }> = [
-  { key: 'geo', aliases: ['гео', 'город', 'geo', 'city'] },
-  { key: 'budget', aliases: ['бюджет', 'budget'] },
-  { key: 'cpl', aliases: ['цена', 'cpl', 'cpa'] },
-  { key: 'url', aliases: ['ссылка', 'url', 'link', 'href'] },
-];
+const ALIAS_TO_KEY: Record<string, 'geo' | 'budget' | 'cpl' | 'url'> = {
+  гео: 'geo',
+  город: 'geo',
+  geo: 'geo',
+  city: 'geo',
+  бюджет: 'budget',
+  budget: 'budget',
+  цена: 'cpl',
+  cpl: 'cpl',
+  cpa: 'cpl',
+  ссылка: 'url',
+  url: 'url',
+  link: 'url',
+  href: 'url',
+};
+
+/**
+ * Tokenize header by `key:value` pairs. We match `key:` markers, slice
+ * the value as everything until the next marker — handles multi-word
+ * Russian values (e.g. "гео:Нижний Новгород бюджет:1500").
+ */
+function parseHeader(header: string): {
+  geo?: string;
+  budget?: number;
+  cpl?: number;
+  url?: string;
+} {
+  const aliasPattern = Object.keys(ALIAS_TO_KEY).join('|');
+  // global, case-insensitive — find every "alias:" marker
+  const markerRe = new RegExp(`(?:^|\\s)(${aliasPattern})\\s*[:=]\\s*`, 'gi');
+  type Marker = {
+    key: 'geo' | 'budget' | 'cpl' | 'url';
+    matchStart: number; // index where ` alias:` begins
+    valueStart: number; // index where the value starts
+  };
+  const markers: Marker[] = [];
+
+  let m: RegExpExecArray | null;
+  while ((m = markerRe.exec(header)) !== null) {
+    const alias = m[1]!.toLowerCase();
+    const key = ALIAS_TO_KEY[alias];
+    if (key) {
+      markers.push({ key, matchStart: m.index, valueStart: m.index + m[0].length });
+    }
+  }
+
+  const result: { geo?: string; budget?: number; cpl?: number; url?: string } = {};
+  for (let i = 0; i < markers.length; i++) {
+    const start = markers[i]!.valueStart;
+    const end = i + 1 < markers.length ? markers[i + 1]!.matchStart : header.length;
+    const value = header.slice(start, end).trim();
+    if (!value) continue;
+
+    const key = markers[i]!.key;
+    if (key === 'budget' || key === 'cpl') {
+      const num = parseInt(value.replace(/[^\d]/g, ''), 10);
+      if (!isNaN(num)) result[key] = num;
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
 
 export function parseCreateCampaignCommand(rawText: string): ParsedCreateCampaign | null {
   if (!rawText) return null;
   const text = rawText.trim();
 
-  const typeMatch = text.match(TYPE_PATTERN);
+  const typeMatch = text.match(KIND_REGEX);
   if (!typeMatch) return null;
 
   const kindWord = typeMatch[1]!.toLowerCase();
   const kind: CampaignKind = /поиск|search/.test(kindWord) ? 'search' : 'network';
 
-  // Split brief from params: brief is everything after first newline,
-  // OR after explicit "бриф:" / "brief:" / "описание:" marker.
+  // Split brief from header
   let header = text;
   let brief: string | undefined;
 
   const briefMarker = text.match(/\n|\b(?:бриф|brief|описание)\s*:/i);
   if (briefMarker && briefMarker.index !== undefined) {
     header = text.slice(0, briefMarker.index).trim();
-    const tail = text
-      .slice(briefMarker.index + briefMarker[0].length)
-      .trim();
+    const tail = text.slice(briefMarker.index + briefMarker[0].length).trim();
     if (tail) brief = tail;
   }
 
-  const result: ParsedCreateCampaign = { kind, brief };
+  const fields = parseHeader(header);
 
-  for (const field of FIELDS) {
-    for (const alias of field.aliases) {
-      // Match "field:value" — value is everything until next "word:" or end-of-line.
-      const re = new RegExp(`\\b${alias}\\s*[:=]\\s*([^\\n]+?)(?=\\s+\\b\\w+\\s*[:=]|$)`, 'i');
-      const m = header.match(re);
-      if (m) {
-        const raw = m[1]!.trim();
-        if (field.key === 'budget' || field.key === 'cpl') {
-          const num = parseInt(raw.replace(/[^\d]/g, ''), 10);
-          if (!isNaN(num)) (result[field.key] as number) = num;
-        } else if (field.key === 'geo') {
-          result.geo = raw;
-        } else if (field.key === 'url') {
-          result.url = raw;
-        }
-        break;
-      }
-    }
-  }
-
-  return result;
+  return { kind, ...fields, brief };
 }
 
 /** What fields are still missing — used to decide what to ask the user. */

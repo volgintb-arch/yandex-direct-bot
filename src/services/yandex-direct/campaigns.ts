@@ -1,5 +1,13 @@
 import { direct, toMicros } from './client.js';
 
+/** YYYY-MM-DD in Moscow timezone (Yandex Direct uses Moscow time). */
+function today(): string {
+  const now = new Date();
+  // Convert to MSK (UTC+3)
+  const msk = new Date(now.getTime() + 3 * 3600 * 1000);
+  return msk.toISOString().slice(0, 10);
+}
+
 export interface CampaignSummary {
   Id: number;
   Name: string;
@@ -55,19 +63,43 @@ export interface CreateNetworkCampaignInput {
   networkStrategy?: BiddingStrategyType; // default WB_MAXIMUM_CLICKS
 }
 
+interface DirectError {
+  Code: number;
+  Message: string;
+  Details?: string;
+}
+
 interface AddCampaignsResponse {
-  AddResults: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }>;
+  AddResults: Array<{
+    Id?: number;
+    Errors?: DirectError[];
+    Warnings?: DirectError[];
+  }>;
+}
+
+function formatErrors(errors?: DirectError[]): string {
+  if (!errors || errors.length === 0) return 'unknown';
+  return errors
+    .map((e) => `[${e.Code}] ${e.Message}${e.Details ? ' — ' + e.Details : ''}`)
+    .join('; ');
 }
 
 export async function createSearchCampaign(input: CreateSearchCampaignInput): Promise<number> {
+  // Auto-strategy WB_MAXIMUM_CLICKS uses WeeklySpendLimit; DailyBudget is
+  // mutually exclusive with auto-strategies (Direct error 6000).
   const r = await direct<AddCampaignsResponse>('campaigns', 'add', {
     Campaigns: [
       {
         Name: input.name,
-        DailyBudget: { Amount: toMicros(input.dailyBudgetRub), Mode: 'STANDARD' },
+        StartDate: today(),
         TextCampaign: {
           BiddingStrategy: {
-            Search: { BiddingStrategyType: input.searchStrategy ?? 'WB_MAXIMUM_CLICKS' },
+            Search: {
+              BiddingStrategyType: 'WB_MAXIMUM_CLICKS',
+              WbMaximumClicks: {
+                WeeklySpendLimit: toMicros(input.dailyBudgetRub * 7),
+              },
+            },
             Network: { BiddingStrategyType: 'SERVING_OFF' },
           },
         },
@@ -76,9 +108,7 @@ export async function createSearchCampaign(input: CreateSearchCampaignInput): Pr
   });
   const result = r.AddResults?.[0];
   if (!result?.Id) {
-    throw new Error(
-      `Failed to create campaign: ${result?.Errors?.map((e) => e.Message).join('; ') ?? 'unknown'}`
-    );
+    throw new Error(`Failed to create campaign: ${formatErrors(result?.Errors)}`);
   }
   return result.Id;
 }
@@ -88,11 +118,16 @@ export async function createNetworkCampaign(input: CreateNetworkCampaignInput): 
     Campaigns: [
       {
         Name: input.name,
-        DailyBudget: { Amount: toMicros(input.dailyBudgetRub), Mode: 'STANDARD' },
+        StartDate: today(),
         TextCampaign: {
           BiddingStrategy: {
             Search: { BiddingStrategyType: 'SERVING_OFF' },
-            Network: { BiddingStrategyType: input.networkStrategy ?? 'WB_MAXIMUM_CLICKS' },
+            Network: {
+              BiddingStrategyType: 'WB_MAXIMUM_CLICKS',
+              WbMaximumClicks: {
+                WeeklySpendLimit: toMicros(input.dailyBudgetRub * 7),
+              },
+            },
           },
         },
       },
@@ -100,9 +135,7 @@ export async function createNetworkCampaign(input: CreateNetworkCampaignInput): 
   });
   const result = r.AddResults?.[0];
   if (!result?.Id) {
-    throw new Error(
-      `Failed to create campaign: ${result?.Errors?.map((e) => e.Message).join('; ') ?? 'unknown'}`
-    );
+    throw new Error(`Failed to create campaign: ${formatErrors(result?.Errors)}`);
   }
   return result.Id;
 }

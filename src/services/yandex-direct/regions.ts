@@ -10,48 +10,39 @@ export interface YandexRegion {
 }
 
 interface RegionsResponse {
-  Regions: YandexRegion[];
+  GeoRegions: YandexRegion[];
 }
 
 /**
  * Sync the entire region dictionary from Yandex into local cache.
- * Run once at startup or daily — dictionary is huge (~150k entries).
+ * Run once at startup or daily — ~17k entries.
  */
 export async function syncRegions(): Promise<number> {
   const r = await direct<RegionsResponse>('dictionaries', 'get', {
     DictionaryNames: ['GeoRegions'],
   });
-  const regions = r.Regions ?? [];
+  const regions = r.GeoRegions ?? [];
   if (regions.length === 0) {
     logger.warn('regions sync returned 0 entries');
     return 0;
   }
 
-  // Upsert in chunks of 1000 to avoid huge transactions.
-  const CHUNK = 1000;
+  // Wipe + bulk insert — much faster than per-row upsert for 17k rows.
+  await db.regionCache.deleteMany({});
+  const CHUNK = 2000;
   let written = 0;
   for (let i = 0; i < regions.length; i += CHUNK) {
     const chunk = regions.slice(i, i + CHUNK);
-    await db.$transaction(
-      chunk.map((reg) =>
-        db.regionCache.upsert({
-          where: { yandexId: reg.GeoRegionId },
-          create: {
-            yandexId: reg.GeoRegionId,
-            name: reg.GeoRegionName,
-            parentId: reg.ParentId ?? null,
-            type: reg.GeoRegionType,
-          },
-          update: {
-            name: reg.GeoRegionName,
-            parentId: reg.ParentId ?? null,
-            type: reg.GeoRegionType,
-            cachedAt: new Date(),
-          },
-        })
-      )
-    );
-    written += chunk.length;
+    const r = await db.regionCache.createMany({
+      data: chunk.map((reg) => ({
+        yandexId: reg.GeoRegionId,
+        name: reg.GeoRegionName,
+        parentId: reg.ParentId ?? null,
+        type: reg.GeoRegionType,
+      })),
+      skipDuplicates: true,
+    });
+    written += r.count;
   }
   logger.info({ count: written }, 'regions synced');
   return written;

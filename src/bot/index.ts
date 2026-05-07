@@ -22,6 +22,7 @@ import {
   handleRevise,
   handleReject,
   handleApply,
+  handleShrink,
   handleRevisionText,
 } from './handlers/callbacks.js';
 
@@ -77,6 +78,9 @@ bot.on('callback_query:data', async (ctx) => {
         break;
       case 'apply':
         if (arg1) await handleApply(ctx, arg1);
+        break;
+      case 'shrink':
+        if (arg1) await handleShrink(ctx, arg1);
         break;
       case 'reject':
         if (arg1) await handleReject(ctx, arg1);

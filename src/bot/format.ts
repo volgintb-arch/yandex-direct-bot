@@ -34,8 +34,17 @@ export function formatVariantCard(v: CampaignVariant, idx?: number): string {
   ].join('\n');
 }
 
-/** Short one-line summary for the carousel. */
+/** Short variant card for the carousel — preview as Direct ad would show. */
 export function formatVariantShort(v: CampaignVariant): string {
   const d = v.draft;
-  return `*${escapeMd(v.title)}*\n_${escapeMd(d.adgroup_name)}_ · ${d.keywords.length} ключей · ${d.negative_keywords.length} минусов\n▸ ${escapeMd(d.ad.title1)}`;
+  const limit = (val: number, max: number) => (val > max ? `⚠️${val}/${max}` : `${val}/${max}`);
+  return [
+    `*${escapeMd(v.title)}*`,
+    `_${escapeMd(d.adgroup_name)}_ · ${d.keywords.length} ключей · ${d.negative_keywords.length} минусов`,
+    '',
+    `🎯 *${escapeMd(d.ad.title1)}* \\| ${escapeMd(d.ad.title2)}`,
+    `📝 ${escapeMd(d.ad.text)}`,
+    `🔗 ${d.ad.url}`,
+    `_T1: ${limit(d.ad.title1.length, 35)} · T2: ${limit(d.ad.title2.length, 30)} · txt: ${limit(d.ad.text.length, 81)}_`,
+  ].join('\n');
 }

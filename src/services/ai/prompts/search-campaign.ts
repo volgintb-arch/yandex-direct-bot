@@ -53,7 +53,9 @@ export function buildSearchPrompt(input: BuildSearchPromptInput): {
     ? `\n=== ЧТО НЕ РАБОТАЛО У НАС (избегай) ===\n${input.failurePatterns.trim()}\n`
     : '';
 
-  const prompt = `Создай 3 варианта поисковой кампании Яндекс.Директ для бизнеса.
+  const prompt = `КРИТИЧНО: верни РОВНО 3 варианта в массиве "variants". Не 2, не 4 — именно 3. Каждый — со ВСЕМИ полями.
+
+Создай 3 варианта поисковой кампании Яндекс.Директ для бизнеса.
 
 === БИЗНЕС ===
 ${config.BUSINESS_NAME}

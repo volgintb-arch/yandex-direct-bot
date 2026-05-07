@@ -5,9 +5,10 @@ import { config } from '../../lib/config.js';
 import { variantActionsKeyboard, variantsKeyboard, cplSuggestionKeyboard } from '../keyboards.js';
 import { formatVariantCard } from '../format.js';
 import { applyVariant } from '../../services/yandex-direct/apply-engine.js';
-import { suggestCpl } from '../../services/ai/campaign-builder.js';
+import { suggestCpl, shrinkVariant, reviseVariant } from '../../services/ai/campaign-builder.js';
 import { runGeneration } from './create-campaign.js';
 import type { CampaignVariant } from '../../services/ai/prompts/search-campaign.js';
+import { variantHasIssues } from '../../services/ai/validate.js';
 
 interface PendingCommand {
   kind: 'search' | 'network';
@@ -143,11 +144,51 @@ export async function handleSelectVariant(
   });
   await ctx.answerCallbackQuery({ text: `Выбран: ${variant.title}` });
 
+  const hasIssues = variantHasIssues(variant);
   await ctx.editMessageText(formatVariantCard(variant), {
     parse_mode: 'Markdown',
-    reply_markup: variantActionsKeyboard(approvalId),
+    reply_markup: variantActionsKeyboard(approvalId, hasIssues),
     link_preview_options: { is_disabled: true },
   });
+}
+
+/** Auto-shrink fields that exceed Direct char limits. */
+export async function handleShrink(ctx: SessionContext, approvalId: string): Promise<void> {
+  const approval = await db.approval.findUnique({ where: { id: approvalId } });
+  if (!approval || approval.status !== 'pending' || !approval.selectedVariantId) {
+    await ctx.answerCallbackQuery({ text: 'Сначала выбери вариант' });
+    return;
+  }
+  const current = findVariant(approval, approval.selectedVariantId);
+  if (!current) {
+    await ctx.answerCallbackQuery({ text: 'Вариант не найден' });
+    return;
+  }
+  await ctx.answerCallbackQuery({ text: 'Сокращаю...' });
+  await ctx.editMessageText('✂️ Сокращаю поля до лимитов Директа...');
+
+  try {
+    const updated = await shrinkVariant(current);
+    const variants = approval.variants as unknown as CampaignVariant[];
+    const idx = variants.findIndex((v) => v.variant_id === approval.selectedVariantId);
+    if (idx >= 0) variants[idx] = updated;
+    await db.approval.update({
+      where: { id: approvalId },
+      data: { variants: variants as unknown as object },
+    });
+    const hasIssues = variantHasIssues(updated);
+    await ctx.editMessageText(formatVariantCard(updated), {
+      parse_mode: 'Markdown',
+      reply_markup: variantActionsKeyboard(approvalId, hasIssues),
+      link_preview_options: { is_disabled: true },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ err, approvalId }, 'shrink failed');
+    await ctx.editMessageText(`❌ Не удалось сократить: ${msg}`, {
+      reply_markup: variantActionsKeyboard(approvalId, true),
+    });
+  }
 }
 
 export async function handleBack(ctx: SessionContext, approvalId: string): Promise<void> {
@@ -208,6 +249,17 @@ export async function handleApply(ctx: SessionContext, approvalId: string): Prom
     return;
   }
 
+  // Guard: refuse to apply if any field still exceeds Direct limits.
+  if (variantHasIssues(variant)) {
+    await ctx.answerCallbackQuery({ text: 'Сначала сократи поля' });
+    await ctx.editMessageText(formatVariantCard(variant), {
+      parse_mode: 'Markdown',
+      reply_markup: variantActionsKeyboard(approvalId, true),
+      link_preview_options: { is_disabled: true },
+    });
+    return;
+  }
+
   await ctx.answerCallbackQuery({ text: 'Применяю...' });
   await ctx.editMessageText('⏳ Применяю в Яндекс.Директ...');
 
@@ -249,12 +301,23 @@ export async function handleApply(ctx: SessionContext, approvalId: string): Prom
       .join('\n');
     await ctx.editMessageText(lines, { parse_mode: 'Markdown' });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
     logger.error({ err, approvalId }, 'apply failed');
-    await ctx.editMessageText(`❌ Ошибка применения: ${msg}`, {
+    const msg = formatErrorForUser(err);
+    await ctx.editMessageText(`❌ Ошибка применения:\n${msg}`, {
       reply_markup: variantActionsKeyboard(approvalId),
     });
   }
+}
+
+function formatErrorForUser(err: unknown): string {
+  if (err && typeof err === 'object' && 'message' in err) {
+    const e = err as { message?: string; detail?: string; code?: number | string };
+    const parts = [e.message ?? 'Unknown error'];
+    if (e.detail) parts.push(`📋 ${e.detail}`);
+    if (e.code !== undefined) parts.push(`(код ${e.code})`);
+    return parts.join('\n');
+  }
+  return String(err);
 }
 
 /* ─── Revision text handler (state=awaiting_revision_text) ────────── */
@@ -283,7 +346,6 @@ export async function handleRevisionText(ctx: SessionContext, text: string): Pro
 
   const status = await ctx.reply('⏳ Применяю правки...');
   try {
-    const { reviseVariant } = await import('../../services/ai/campaign-builder.js');
     const updated = await reviseVariant(current, text);
 
     // Replace variant in array
@@ -299,13 +361,14 @@ export async function handleRevisionText(ctx: SessionContext, text: string): Pro
     ctx.session.state = 'idle';
     await ctx.saveSession();
 
+    const hasIssues = variantHasIssues(updated);
     await ctx.api.editMessageText(
       ctx.chat!.id,
       status.message_id,
       formatVariantCard(updated),
       {
         parse_mode: 'Markdown',
-        reply_markup: variantActionsKeyboard(approvalId),
+        reply_markup: variantActionsKeyboard(approvalId, hasIssues),
         link_preview_options: { is_disabled: true },
       }
     );

@@ -118,19 +118,63 @@ export async function generate(tier: ModelTier, opts: GenerateOptions): Promise<
   }
 }
 
-/** Generate and parse JSON. Strips markdown fences if model wraps them. */
+/** Generate and parse JSON. Strips markdown fences and escapes raw control chars. */
 export async function generateJson<T = unknown>(
   tier: ModelTier,
   opts: GenerateOptions
 ): Promise<T> {
   const text = await generate(tier, { ...opts, jsonObject: true });
-  const cleaned = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
+  const stripped = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
+  const cleaned = sanitizeJsonControlChars(stripped);
   try {
     return JSON.parse(cleaned) as T;
   } catch (err) {
     logger.error({ text: text.slice(0, 500), err }, 'failed to parse YandexGPT JSON');
     throw new ApiError('YandexGPT returned malformed JSON', 'yandex_gpt');
   }
+}
+
+/**
+ * YandexGPT sometimes returns JSON with raw \n / \t / \r inside string literals,
+ * which breaks JSON.parse. Walk the text and escape any 0x00..0x1F char that
+ * appears inside a "string" (skipping content protected by backslash).
+ */
+function sanitizeJsonControlChars(text: string): string {
+  let out = '';
+  let inString = false;
+  let escapeNext = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    const code = ch.charCodeAt(0);
+    if (escapeNext) {
+      out += ch;
+      escapeNext = false;
+      continue;
+    }
+    if (ch === '\\') {
+      out += ch;
+      escapeNext = true;
+      continue;
+    }
+    if (ch === '"') {
+      out += ch;
+      inString = !inString;
+      continue;
+    }
+    if (inString && code < 0x20) {
+      switch (ch) {
+        case '\n': out += '\\n'; break;
+        case '\r': out += '\\r'; break;
+        case '\t': out += '\\t'; break;
+        case '\b': out += '\\b'; break;
+        case '\f': out += '\\f'; break;
+        default: out += '\\u' + code.toString(16).padStart(4, '0');
+      }
+    } else {
+      out += ch;
+    }
+  }
+  return out;
 }
 
 /** Health check — minimal call. Returns true if model produces any non-empty response. */
