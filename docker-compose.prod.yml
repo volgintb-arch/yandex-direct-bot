@@ -1,0 +1,17 @@
+# Production override.
+# Run with: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Uses host network so the bot can reach Postgres on localhost:5432 directly,
+# avoiding the host.docker.internal trickery. nginx (also on host) proxies
+# https://direct-bot.questlegends.ru → 127.0.0.1:3004.
+
+services:
+  bot:
+    network_mode: host
+    # ports + extra_hosts not needed in host mode
+    ports: !reset []
+    extra_hosts: !reset []
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: info
+      TELEGRAM_USE_POLLING: "false"

@@ -221,9 +221,13 @@ bot.catch((err) => {
   logger.error({ err: err.error, update: err.ctx?.update }, 'bot error');
 });
 
-export async function startBotPolling(): Promise<void> {
+/** One-time setup that must run regardless of polling/webhook mode. */
+export async function bootstrapBot(): Promise<void> {
   await ensureBootstrapAdmin();
   await setBotCommands().catch((err) => logger.warn({ err }, 'failed to set commands'));
+}
+
+export async function startBotPolling(): Promise<void> {
   await bot.start({
     drop_pending_updates: true,
     onStart: (info) => logger.info({ username: info.username }, '🤖 bot polling started'),

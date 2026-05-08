@@ -4,7 +4,7 @@ import { webhookCallback } from 'grammy';
 import { config } from './lib/config.js';
 import { logger } from './lib/logger.js';
 import { db, disconnectDb } from './lib/db.js';
-import { bot, startBotPolling, stopBot } from './bot/index.js';
+import { bot, bootstrapBot, startBotPolling, stopBot } from './bot/index.js';
 
 const app = new Hono();
 
@@ -53,6 +53,12 @@ const server = serve(
     );
   }
 );
+
+// Bootstrap (admin whitelist + commands list) runs in BOTH modes.
+bootstrapBot().catch((err) => {
+  logger.fatal({ err }, 'failed to bootstrap bot');
+  process.exit(1);
+});
 
 if (config.TELEGRAM_USE_POLLING) {
   startBotPolling().catch((err) => {
