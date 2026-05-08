@@ -2,6 +2,7 @@ import { config } from '../../lib/config.js';
 import { logger } from '../../lib/logger.js';
 import { ApiError } from '../../lib/errors.js';
 import { db } from '../../lib/db.js';
+import * as deepseek from './deepseek.js';
 
 /**
  * Yandex Foundation Models — text completion API.
@@ -50,6 +51,16 @@ export interface GenerateOptions {
 }
 
 export async function generate(tier: ModelTier, opts: GenerateOptions): Promise<string> {
+  // Route 'pro' tier to DeepSeek when configured.
+  if (tier === 'pro' && config.AI_PRO_PROVIDER === 'deepseek' && config.DEEPSEEK_MODEL_URI) {
+    return deepseek.generate({
+      prompt: opts.prompt,
+      system: opts.system,
+      temperature: opts.temperature,
+      maxTokens: Math.max(opts.maxTokens ?? 0, 4000),
+    });
+  }
+
   const messages: YgptMessage[] = [];
   if (opts.system) messages.push({ role: 'system', text: opts.system });
   messages.push({ role: 'user', text: opts.prompt });
@@ -123,6 +134,16 @@ export async function generateJson<T = unknown>(
   tier: ModelTier,
   opts: GenerateOptions
 ): Promise<T> {
+  // Route 'pro' tier to DeepSeek when configured.
+  if (tier === 'pro' && config.AI_PRO_PROVIDER === 'deepseek' && config.DEEPSEEK_MODEL_URI) {
+    return deepseek.generateJson<T>({
+      prompt: opts.prompt,
+      system: opts.system,
+      temperature: opts.temperature,
+      maxTokens: Math.max(opts.maxTokens ?? 0, 4000),
+    });
+  }
+
   const text = await generate(tier, { ...opts, jsonObject: true });
   const stripped = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
   const cleaned = sanitizeJsonControlChars(stripped);

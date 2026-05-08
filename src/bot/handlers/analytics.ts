@@ -38,7 +38,7 @@ export async function handleAnalytics(ctx: SessionContext, days = 7): Promise<vo
       await ctx.api.editMessageText(
         ctx.chat!.id,
         status.message_id,
-        `📭 За ${days} дней нет данных по кампаниям.`
+        `📭 Нет активных кампаний или нет данных за ${days} дн.`
       );
       return;
     }
@@ -51,7 +51,7 @@ export async function handleAnalytics(ctx: SessionContext, days = 7): Promise<vo
     const summary = await summarizeAnalytics(data);
 
     const lines = [
-      `📊 *Аналитика за ${days} дн.*`,
+      `📊 *Аналитика за ${days} дн.* _(только активные кампании)_`,
       '',
       `Кампаний: *${data.campaigns.length}*  ·  Показов: *${data.totalImpressions.toLocaleString('ru-RU')}*`,
       `Кликов: *${data.totalClicks.toLocaleString('ru-RU')}*  ·  CTR: *${data.avgCtr}%*`,
@@ -89,16 +89,16 @@ export async function handleOptimization(ctx: SessionContext, days = 7): Promise
       await ctx.api.editMessageText(
         ctx.chat!.id,
         status.message_id,
-        `📭 За ${days} дней нет данных. Сначала запусти кампании.`
+        `📭 Нет активных кампаний для оптимизации.`
       );
       return;
     }
 
     const tips = await suggestOptimizations(data);
     const lines = [
-      `*⚡ Рекомендации по оптимизации (${days} дн.)*`,
+      `*⚡ Рекомендации по оптимизации (${days} дн.)* _(только активные)_`,
       '',
-      tips || '_ИИ отказался давать рекомендации (фильтр Яндекс GPT). Попробуй позже или используй ручную аналитику._',
+      tips || '_ИИ отказался давать рекомендации. Попробуй позже._',
     ].join('\n');
 
     await ctx.api.editMessageText(ctx.chat!.id, status.message_id, lines, {

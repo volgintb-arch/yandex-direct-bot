@@ -1,4 +1,5 @@
 import { fetchReport, type DateRangePreset } from '../yandex-direct/reports.js';
+import { listCampaigns } from '../yandex-direct/campaigns.js';
 import * as ygpt from './yandex-gpt.js';
 import {
   buildAnalyticsPrompt,
@@ -27,14 +28,28 @@ function classifyCampaignType(name: string): 'search' | 'network' | 'mixed' {
 /**
  * Pull a CAMPAIGN_PERFORMANCE_REPORT, aggregate, build context for AI.
  * Returns null if there are no rows (no campaigns / no traffic).
+ *
+ * Filters to ONLY currently running campaigns (State=ON).
+ * Suspended, off, archived and ended campaigns are excluded — we don't want
+ * the AI suggesting tweaks to inactive lines.
  */
 export async function loadAnalyticsContext(days = 7): Promise<AnalyticsContext | null> {
+  // Step 1: pull list of currently-running campaigns.
+  const activeCampaigns = await listCampaigns({ states: ['ON'] });
+  if (activeCampaigns.length === 0) {
+    logger.info('no active campaigns in account');
+    return null;
+  }
+  const activeIds = activeCampaigns.map((c) => c.Id);
+
+  // Step 2: report scoped to those IDs only.
   const dateRange = DAYS_TO_PRESET[days] ?? 'LAST_7_DAYS';
   const rows = await fetchReport({
     reportName: `bot-analytics-${days}d-${Date.now()}`,
     reportType: 'CAMPAIGN_PERFORMANCE_REPORT',
     dateRange,
     fieldNames: FIELDS,
+    filter: { campaignIds: activeIds },
   });
 
   if (rows.length === 0) return null;

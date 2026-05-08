@@ -3,6 +3,8 @@ import { db } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import * as wordstat from '../../services/wordstat/client.js';
 import * as ygpt from '../../services/ai/yandex-gpt.js';
+import * as deepseek from '../../services/ai/deepseek.js';
+import { config } from '../../lib/config.js';
 import * as crm from '../../services/crm-questlegends/client.js';
 import { listCampaigns } from '../../services/yandex-direct/campaigns.js';
 
@@ -47,7 +49,10 @@ export async function handleHealth(ctx: SessionContext): Promise<void> {
     }),
     timed('Wordstat', () => wordstat.ping()),
     timed('YandexGPT Lite', () => ygpt.ping('lite')),
-    timed('YandexGPT Pro', () => ygpt.ping('pro')),
+    timed(
+      config.AI_PRO_PROVIDER === 'deepseek' ? 'DeepSeek V3.2 (pro)' : 'YandexGPT Pro',
+      () => (config.AI_PRO_PROVIDER === 'deepseek' ? deepseek.ping() : ygpt.ping('pro'))
+    ),
     timed('CRM (QuestLegends)', () => crm.ping()),
   ]);
 

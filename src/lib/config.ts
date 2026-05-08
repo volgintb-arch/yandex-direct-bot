@@ -30,6 +30,10 @@ const schema = z.object({
   // YandexGPT (Foundation Models)
   YANDEX_GPT_API_KEY: z.string().min(1),
   YANDEX_CLOUD_FOLDER_ID: z.string().min(1),
+  // DeepSeek V3.2 via Yandex AI Studio OpenAI-compatible endpoint (optional).
+  // When set + AI_PRO_PROVIDER=deepseek, all 'pro' tier calls route here.
+  DEEPSEEK_MODEL_URI: z.string().optional().default(''),
+  AI_PRO_PROVIDER: z.enum(['yandex', 'deepseek']).default('yandex'),
 
   // CRM (QL OS)
   CRM_BASE_URL: z.string().url(),
