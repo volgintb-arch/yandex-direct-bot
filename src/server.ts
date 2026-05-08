@@ -6,6 +6,7 @@ import { logger } from './lib/logger.js';
 import { db, disconnectDb } from './lib/db.js';
 import { bot, bootstrapBot, startBotPolling, stopBot } from './bot/index.js';
 import marketingApi from './miniapp-api/marketing.js';
+import { startScheduler } from './jobs/scheduler.js';
 
 const app = new Hono();
 
@@ -64,6 +65,9 @@ bootstrapBot().catch((err) => {
   logger.fatal({ err }, 'failed to bootstrap bot');
   process.exit(1);
 });
+
+// Periodic background jobs (sync-leads /4h, daily-learning at 06:00 MSK).
+startScheduler();
 
 if (config.TELEGRAM_USE_POLLING) {
   startBotPolling().catch((err) => {

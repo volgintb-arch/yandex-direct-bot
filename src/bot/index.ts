@@ -21,6 +21,7 @@ import {
   handleRenameImage,
   handleRenameText,
 } from './handlers/images.js';
+import { handleSync, handleLearn } from './handlers/learn.js';
 import {
   handleCplAi,
   handleCplAccept,
@@ -54,6 +55,8 @@ bot.command('ping', async (ctx) => {
 });
 bot.command('health', handleHealth);
 bot.command('images', handleListImages);
+bot.command('sync', async (ctx) => requireAdmin(ctx, () => Promise.resolve(handleSync(ctx))));
+bot.command('learn', async (ctx) => requireAdmin(ctx, () => Promise.resolve(handleLearn(ctx))));
 bot.command('analytics', async (ctx) => {
   const arg = parseInt(ctx.message?.text?.split(/\s+/)[1] ?? '7', 10);
   await handleAnalytics(ctx, [7, 14, 30, 90].includes(arg) ? arg : 7);
@@ -213,6 +216,8 @@ export async function setBotCommands(): Promise<void> {
     { command: 'analytics', description: 'Аналитика за 7 дней' },
     { command: 'optimize', description: 'Рекомендации ИИ по оптимизации' },
     { command: 'images', description: 'Банк картинок РСЯ' },
+    { command: 'sync', description: 'Синхронизировать CRM лиды + расход' },
+    { command: 'learn', description: 'Обучить ИИ на 30-дневных данных' },
     { command: 'cancel', description: 'Отменить текущее действие' },
   ]);
 }

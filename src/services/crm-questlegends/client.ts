@@ -111,3 +111,81 @@ export async function ping(): Promise<boolean> {
     return false;
   }
 }
+
+export interface RecentLead extends CrmLead {
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  utmContent: string | null;
+  utmTerm: string | null;
+  gclid: string | null;
+  cancellationReason: string | null;
+}
+
+interface RecentLeadsResponse {
+  leads: RecentLead[];
+  meta: { from: string; to: string; total: number; limit: number };
+}
+
+export interface FetchRecentOpts {
+  from: string; // ISO
+  to: string;
+  utmSource?: string;
+  utmCampaign?: string;
+  type?: 'b2b' | 'b2c';
+  limit?: number;
+}
+
+/** Pull all leads in a period (from QL OS /api/leads/recent). */
+export async function fetchRecentLeads(opts: FetchRecentOpts): Promise<RecentLead[]> {
+  const url = new URL('/api/leads/recent', config.CRM_BASE_URL);
+  url.searchParams.set('from', opts.from);
+  url.searchParams.set('to', opts.to);
+  if (opts.utmSource) url.searchParams.set('utm_source', opts.utmSource);
+  if (opts.utmCampaign) url.searchParams.set('utm_campaign', opts.utmCampaign);
+  if (opts.type) url.searchParams.set('type', opts.type);
+  if (opts.limit) url.searchParams.set('limit', String(opts.limit));
+
+  const start = Date.now();
+  let status: number | undefined;
+  let errorMsg: string | undefined;
+  let responseSize: number | undefined;
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${config.CRM_INTEGRATION_API_KEY}`,
+        Accept: 'application/json',
+      },
+    });
+    status = res.status;
+    const text = await res.text();
+    responseSize = text.length;
+    if (!res.ok) {
+      throw new ApiError(
+        `CRM /recent HTTP ${res.status}: ${text.slice(0, 200)}`,
+        'crm',
+        res.status
+      );
+    }
+    const json = JSON.parse(text) as RecentLeadsResponse;
+    return json.leads ?? [];
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : String(err);
+    logger.error({ err: errorMsg, opts }, 'crm /recent failed');
+    throw err;
+  } finally {
+    void db.apiCallLog
+      .create({
+        data: {
+          service: 'crm',
+          endpoint: 'GET /api/leads/recent',
+          status,
+          durationMs: Date.now() - start,
+          error: errorMsg,
+          responseSize,
+        },
+      })
+      .catch(() => {});
+  }
+}
