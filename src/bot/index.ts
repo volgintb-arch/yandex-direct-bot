@@ -13,6 +13,7 @@ import { handleHealth } from './handlers/health.js';
 import { handleGrant, handleRevoke, handleUsers } from './handlers/grant.js';
 import { handleCreateCampaign } from './handlers/create-campaign.js';
 import { handleUploadImage, handleUploadDocument } from './handlers/upload-image.js';
+import { handleAnalytics, handleOptimization } from './handlers/analytics.js';
 import {
   handleSyncImages,
   handleListImages,
@@ -53,6 +54,14 @@ bot.command('ping', async (ctx) => {
 });
 bot.command('health', handleHealth);
 bot.command('images', handleListImages);
+bot.command('analytics', async (ctx) => {
+  const arg = parseInt(ctx.message?.text?.split(/\s+/)[1] ?? '7', 10);
+  await handleAnalytics(ctx, [7, 14, 30, 90].includes(arg) ? arg : 7);
+});
+bot.command('optimize', async (ctx) => {
+  const arg = parseInt(ctx.message?.text?.split(/\s+/)[1] ?? '7', 10);
+  await handleOptimization(ctx, [7, 14, 30, 90].includes(arg) ? arg : 7);
+});
 bot.command('syncimages', async (ctx) =>
   requireAdmin(ctx, () => Promise.resolve(handleSyncImages(ctx)))
 );
@@ -120,6 +129,18 @@ bot.on('callback_query:data', async (ctx) => {
       case 'img_rename':
         if (arg1) await handleRenameImage(ctx, arg1);
         break;
+      case 'analytics_refresh':
+        await ctx.answerCallbackQuery();
+        await handleAnalytics(ctx, parseInt(arg1 ?? '7', 10));
+        break;
+      case 'analytics_optimize':
+        await ctx.answerCallbackQuery();
+        await handleOptimization(ctx, parseInt(arg1 ?? '7', 10));
+        break;
+      case 'analytics_period':
+        await ctx.answerCallbackQuery();
+        await handleAnalytics(ctx, parseInt(arg1 ?? '7', 10));
+        break;
       case 'reject':
         if (arg1) await handleReject(ctx, arg1);
         break;
@@ -164,6 +185,18 @@ bot.on('message:text', async (ctx) => {
     return;
   }
 
+  // 3b. Intent: "аналитика" / "статистика"
+  if (/^(аналитика|статистика|отчёт|отчет|stats|analytics)/i.test(text)) {
+    await handleAnalytics(ctx, 7);
+    return;
+  }
+
+  // 3c. Intent: "оптимизация" / "оптимизируй"
+  if (/^(оптимизация|оптимизируй|optimize|optimization)/i.test(text)) {
+    await handleOptimization(ctx, 7);
+    return;
+  }
+
   // 4. Unknown
   await ctx.reply(
     'Не понял. Команды:\n`/help` — справка\n`/health` — статус API\n\nИли: `создай поиск гео:Краснодар бюджет:1500` (с брифом ниже)',
@@ -177,6 +210,9 @@ export async function setBotCommands(): Promise<void> {
     { command: 'start', description: 'Начало работы' },
     { command: 'help', description: 'Справка' },
     { command: 'health', description: 'Проверить все API' },
+    { command: 'analytics', description: 'Аналитика за 7 дней' },
+    { command: 'optimize', description: 'Рекомендации ИИ по оптимизации' },
+    { command: 'images', description: 'Банк картинок РСЯ' },
     { command: 'cancel', description: 'Отменить текущее действие' },
   ]);
 }
