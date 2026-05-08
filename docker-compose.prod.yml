@@ -14,4 +14,7 @@ services:
     environment:
       NODE_ENV: production
       LOG_LEVEL: info
-      TELEGRAM_USE_POLLING: "false"
+    # TELEGRAM_USE_POLLING is taken from .env (polling=true is more reliable
+    # than webhook for hosts in RU — Telegram often hits Connection timeout
+    # reaching РФ servers). Webhook can be re-enabled later via .env when
+    # the upstream connectivity is verified.
