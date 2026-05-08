@@ -68,6 +68,7 @@ export async function fetchReport(req: ReportRequest): Promise<Record<string, st
     processingMode: 'auto',
     returnMoneyInMicros: 'false',
     skipReportHeader: 'true',
+    skipColumnHeader: 'true',
     skipReportSummary: 'true',
     'Content-Type': 'application/json; charset=utf-8',
   };
