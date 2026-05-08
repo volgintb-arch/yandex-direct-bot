@@ -1,7 +1,37 @@
 import type { SessionContext } from '../middlewares/session.js';
 import { syncLeads } from '../../jobs/sync-leads.js';
 import { runDailyLearning } from '../../jobs/daily-learning.js';
+import { importExisting } from '../../jobs/import-existing.js';
 import { logger } from '../../lib/logger.js';
+
+export async function handleImportExisting(ctx: SessionContext): Promise<void> {
+  const status = await ctx.reply('📥 Импортирую все существующие кампании из Direct...');
+  try {
+    const r = await importExisting();
+    await ctx.api.editMessageText(
+      ctx.chat!.id,
+      status.message_id,
+      [
+        '✅ *Импорт завершён*',
+        '',
+        `📁 Кампаний: ${r.campaigns.total} (новых ${r.campaigns.created}, обновлено ${r.campaigns.updated})`,
+        `📂 Групп: ${r.adgroups.total} (новых ${r.adgroups.created}, обновлено ${r.adgroups.updated})`,
+        `📝 Объявлений: ${r.ads.total} (новых ${r.ads.created}, обновлено ${r.ads.updated})`,
+        '',
+        '_Теперь \\/sync будет писать AdMetrics для всех кампаний, не только созданных ботом._',
+      ].join('\n'),
+      { parse_mode: 'Markdown' }
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ err }, '/import-existing failed');
+    await ctx.api.editMessageText(
+      ctx.chat!.id,
+      status.message_id,
+      `❌ Импорт упал: ${msg}`
+    );
+  }
+}
 
 export async function handleSync(ctx: SessionContext): Promise<void> {
   const status = await ctx.reply('🔄 Запускаю синхронизацию лидов с CRM + расхода из Direct...');

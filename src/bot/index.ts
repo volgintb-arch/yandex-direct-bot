@@ -21,7 +21,7 @@ import {
   handleRenameImage,
   handleRenameText,
 } from './handlers/images.js';
-import { handleSync, handleLearn } from './handlers/learn.js';
+import { handleSync, handleLearn, handleImportExisting } from './handlers/learn.js';
 import {
   handleCplAi,
   handleCplAccept,
@@ -57,6 +57,9 @@ bot.command('health', handleHealth);
 bot.command('images', handleListImages);
 bot.command('sync', async (ctx) => requireAdmin(ctx, () => Promise.resolve(handleSync(ctx))));
 bot.command('learn', async (ctx) => requireAdmin(ctx, () => Promise.resolve(handleLearn(ctx))));
+bot.command('import_existing', async (ctx) =>
+  requireAdmin(ctx, () => Promise.resolve(handleImportExisting(ctx)))
+);
 bot.command('analytics', async (ctx) => {
   const arg = parseInt(ctx.message?.text?.split(/\s+/)[1] ?? '7', 10);
   await handleAnalytics(ctx, [7, 14, 30, 90].includes(arg) ? arg : 7);
