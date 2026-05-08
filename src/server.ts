@@ -5,6 +5,7 @@ import { config } from './lib/config.js';
 import { logger } from './lib/logger.js';
 import { db, disconnectDb } from './lib/db.js';
 import { bot, bootstrapBot, startBotPolling, stopBot } from './bot/index.js';
+import marketingApi from './miniapp-api/marketing.js';
 
 const app = new Hono();
 
@@ -34,6 +35,10 @@ app.get('/health', async (c) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+// Marketing aggregates API for QuestLegends OS to consume
+// (cost / impressions / clicks per campaign and ad).
+app.route('/api/marketing', marketingApi);
 
 // Telegram webhook (used in production when TELEGRAM_USE_POLLING=false)
 if (!config.TELEGRAM_USE_POLLING) {

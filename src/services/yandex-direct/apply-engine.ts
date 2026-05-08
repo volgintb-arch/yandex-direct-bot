@@ -2,6 +2,7 @@ import { findCampaignByName, createSearchCampaign, createNetworkCampaign } from 
 import { findAdgroupByName, createAdgroup } from './adgroups.js';
 import { createTextAd, createTextImageAd } from './ads.js';
 import { addKeywords, setAdgroupNegativeKeywords } from './keywords.js';
+import { appendTrackingParams } from './utm-builder.js';
 import { db } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import type { CampaignVariant } from '../ai/prompts/search-campaign.js';
@@ -88,7 +89,10 @@ export async function applyVariant(input: ApplyInput): Promise<ApplyResult> {
     }
   }
 
-  // 3. Ad: always create new.
+  // 3. Ad: always create new with UTM tracking baked into the href so we
+  // can attribute every CRM lead back to a specific ad (utm_content=ad_id).
+  const trackedHref = appendTrackingParams(draft.ad.url);
+
   // For РСЯ with image — try TextImageAd first; if Direct rejects the image
   // ([6000] "Размер не соответствует типу"), fall back to plain TextAd so
   // the campaign isn't blocked. User can attach image manually in the cabinet.
@@ -101,7 +105,7 @@ export async function applyVariant(input: ApplyInput): Promise<ApplyResult> {
         title1: draft.ad.title1,
         title2: draft.ad.title2,
         text: draft.ad.text,
-        href: draft.ad.url,
+        href: trackedHref,
         adImageHash: imageHash,
       });
       imageAttached = true;
@@ -115,7 +119,7 @@ export async function applyVariant(input: ApplyInput): Promise<ApplyResult> {
         title1: draft.ad.title1,
         title2: draft.ad.title2,
         text: draft.ad.text,
-        href: draft.ad.url,
+        href: trackedHref,
       });
     }
   } else {
@@ -124,10 +128,10 @@ export async function applyVariant(input: ApplyInput): Promise<ApplyResult> {
       title1: draft.ad.title1,
       title2: draft.ad.title2,
       text: draft.ad.text,
-      href: draft.ad.url,
+      href: trackedHref,
     });
   }
-  logger.info({ id: adId, imageAttached }, 'created ad');
+  logger.info({ id: adId, imageAttached, href: trackedHref }, 'created ad');
 
   // 4. Mirror to local DB for tracking.
   await mirrorToDb({
@@ -140,6 +144,7 @@ export async function applyVariant(input: ApplyInput): Promise<ApplyResult> {
     adgroupName: draft.adgroup_name,
     adId,
     draft,
+    href: trackedHref,
     imageHash,
   });
 
@@ -164,6 +169,7 @@ async function mirrorToDb(input: {
   adgroupName: string;
   adId: number;
   draft: CampaignVariant['draft'];
+  href: string;
   imageHash?: string;
 }): Promise<void> {
   await db.campaign.upsert({
@@ -199,7 +205,7 @@ async function mirrorToDb(input: {
       title1: input.draft.ad.title1,
       title2: input.draft.ad.title2,
       text: input.draft.ad.text,
-      href: input.draft.ad.url,
+      href: input.href,
       imageHash: input.imageHash ?? null,
       state: 'ON',
       status: 'DRAFT',
