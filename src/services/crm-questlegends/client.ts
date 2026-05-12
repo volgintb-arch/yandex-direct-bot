@@ -112,19 +112,46 @@ export async function ping(): Promise<boolean> {
   }
 }
 
-export interface RecentLead extends CrmLead {
-  utmSource: string | null;
-  utmMedium: string | null;
-  utmCampaign: string | null;
-  utmContent: string | null;
-  utmTerm: string | null;
+/**
+ * QL OS `/api/leads/recent` uses snake_case keys for utm/cancellation,
+ * mixed with CrmLead's camelCase basics. Type the raw shape literally.
+ */
+export interface RecentLead {
+  leadId: string;
+  leadType: 'b2c' | 'b2b' | 'deal' | 'game_lead';
+  clientName?: string | null;
+  clientPhone?: string | null;
+  city: string | null;
+  source: string;
+  status: LeadStatus;
+  currency: string;
+  revenue: number | null;
+  yclid: string | null;
   gclid: string | null;
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_campaign: string | null;
+  utm_content: string | null;
+  utm_term: string | null;
+  referrer: string | null;
   cancellationReason: string | null;
+  currentStageName?: string | null;
+  currentStageType?: string | null;
+  createdAt: string;
+  scheduledAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  franchiseeId?: string | null;
+  franchiseeName?: string | null;
 }
 
+/** Actual QL OS shape — `total` and `truncated` live at the top level. */
 interface RecentLeadsResponse {
+  from: string;
+  to: string;
+  total: number;
+  truncated: boolean;
   leads: RecentLead[];
-  meta: { from: string; to: string; total: number; limit: number };
 }
 
 export interface FetchRecentOpts {

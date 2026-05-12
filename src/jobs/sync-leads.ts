@@ -77,7 +77,7 @@ async function syncLeadsToYclidLinks(from: Date, to: Date): Promise<{
   let unmappable = 0;
 
   for (const lead of leads) {
-    const adId = parseAdIdFromUtm(lead.utmContent);
+    const adId = parseAdIdFromUtm(lead.utm_content);
     if (!adId && !lead.yclid) {
       // Can't tie to a specific ad — skip.
       unmappable++;
@@ -273,10 +273,12 @@ async function rollupCrmToAdMetrics(from: Date, to: Date): Promise<number> {
   return upserted;
 }
 
-export async function syncLeads(): Promise<SyncResult> {
-  const from = await getWatermark();
+export async function syncLeads(opts: { fullDays?: number } = {}): Promise<SyncResult> {
+  const from = opts.fullDays
+    ? new Date(Date.now() - opts.fullDays * 24 * 3600 * 1000)
+    : await getWatermark();
   const to = new Date();
-  logger.info({ from, to }, 'sync-leads started');
+  logger.info({ from, to, fullDays: opts.fullDays }, 'sync-leads started');
 
   const { leads, upserted: yclidsUpserted, unmappable } = await syncLeadsToYclidLinks(from, to);
   const costRows = await syncDirectCostToAdMetrics(from, to);

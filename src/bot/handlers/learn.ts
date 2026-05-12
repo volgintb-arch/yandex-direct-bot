@@ -34,9 +34,19 @@ export async function handleImportExisting(ctx: SessionContext): Promise<void> {
 }
 
 export async function handleSync(ctx: SessionContext): Promise<void> {
-  const status = await ctx.reply('🔄 Запускаю синхронизацию лидов с CRM + расхода из Direct...');
+  // /sync — incremental from watermark.
+  // /sync 30 — force re-scan last 30 days (recovery after schema/code changes).
+  const text = ctx.message?.text ?? '';
+  const arg = parseInt(text.split(/\s+/)[1] ?? '', 10);
+  const fullDays = !isNaN(arg) && arg > 0 && arg <= 365 ? arg : undefined;
+
+  const status = await ctx.reply(
+    fullDays
+      ? `🔄 Полный sync за ${fullDays} дней (recovery)...`
+      : '🔄 Инкрементальный sync с CRM + расхода из Direct...'
+  );
   try {
-    const r = await syncLeads();
+    const r = await syncLeads({ fullDays });
     await ctx.api.editMessageText(
       ctx.chat!.id,
       status.message_id,
