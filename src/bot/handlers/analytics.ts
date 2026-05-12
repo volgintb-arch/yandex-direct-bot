@@ -15,7 +15,17 @@ function formatTopCampaigns(campaigns: CampaignStats[], take = 5): string {
     .map((c, i) => {
       const ctr = `${c.ctr}%`;
       const cpc = c.avgCpc > 0 ? `${c.avgCpc}₽` : '—';
-      return `${i + 1}. *${escapeMd(c.campaignName)}*\n     ${c.clicks} кл · CTR ${ctr} · CPC ${cpc} · расход *${c.cost.toLocaleString('ru-RU')}₽*`;
+      const baseLine = `${i + 1}. *${escapeMd(c.campaignName)}*\n     ${c.clicks} кл · CTR ${ctr} · CPC ${cpc} · расход *${c.cost.toLocaleString('ru-RU')}₽*`;
+      if (c.leads !== undefined && c.leads > 0) {
+        const cpl = c.cpl !== null && c.cpl !== undefined ? `${c.cpl}₽` : '—';
+        const roi =
+          c.roi !== null && c.roi !== undefined ? `${(c.roi * 100).toFixed(0)}%` : '—';
+        return (
+          baseLine +
+          `\n     лидов ${c.leads} · оплачено ${c.scheduled ?? 0} · выручка ${(c.revenue ?? 0).toLocaleString('ru-RU')}₽ · CPL ${cpl} · ROI ${roi}`
+        );
+      }
+      return baseLine;
     })
     .join('\n');
 }
@@ -50,18 +60,32 @@ export async function handleAnalytics(ctx: SessionContext, days = 7): Promise<vo
     );
     const summary = await summarizeAnalytics(data);
 
+    const hasCrm = (data.totalLeads ?? 0) > 0;
+    const crmBlock = hasCrm
+      ? [
+          '',
+          '*💰 Из CRM:*',
+          `Лидов: *${data.totalLeads}*  ·  Согласовано (оплачено): *${data.totalScheduled ?? 0}*`,
+          `Завершено: *${data.totalCompleted ?? 0}*  ·  Отказы: *${data.totalCancelled ?? 0}*`,
+          `Конверсия в оплату: *${data.conversionRate ?? 0}%*`,
+          `Выручка: *${(data.totalRevenue ?? 0).toLocaleString('ru-RU')}₽*`,
+          `CPL: *${data.cpl !== null && data.cpl !== undefined ? data.cpl + '₽' : '—'}*  ·  ROI: *${data.roi !== null && data.roi !== undefined ? (data.roi * 100).toFixed(0) + '%' : '—'}*`,
+        ]
+      : ['', '_⚠️ CRM-данных пока нет — запусти `/sync` и подожди появления первых лидов._'];
+
     const lines = [
       `📊 *Аналитика за ${days} дн.* _(только активные кампании)_`,
       '',
       `Кампаний: *${data.campaigns.length}*  ·  Показов: *${data.totalImpressions.toLocaleString('ru-RU')}*`,
       `Кликов: *${data.totalClicks.toLocaleString('ru-RU')}*  ·  CTR: *${data.avgCtr}%*`,
       `Расход: *${data.totalCost.toLocaleString('ru-RU')}₽*  ·  Сред. CPC: *${data.avgCpc}₽*`,
+      ...crmBlock,
       '',
       '*🏆 Топ-5 кампаний по расходу:*',
       formatTopCampaigns(data.campaigns, 5),
       '',
       summary ? '*🧠 Разбор от ИИ:*' : '',
-      summary || '_ИИ отказался разбирать (фильтр Яндекс GPT). Цифры выше актуальны._',
+      summary || '_ИИ отказался разбирать. Цифры выше актуальны._',
     ]
       .filter(Boolean)
       .join('\n');

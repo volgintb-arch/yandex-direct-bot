@@ -9,6 +9,14 @@ export interface CampaignStats {
   cost: number; // ₽
   ctr: number; // %
   avgCpc: number; // ₽
+  // CRM enrichment (filled when bot has AdMetrics → CRM mapping)
+  leads?: number;
+  scheduled?: number; // оплаченные лиды
+  completed?: number;
+  cancelled?: number;
+  revenue?: number;
+  cpl?: number | null; // cost / scheduled
+  roi?: number | null; // (revenue - cost) / cost
 }
 
 export interface AnalyticsContext {
@@ -18,6 +26,15 @@ export interface AnalyticsContext {
   totalCost: number;
   avgCtr: number;
   avgCpc: number;
+  // CRM totals (only present when bot has CRM-enriched AdMetrics)
+  totalLeads?: number;
+  totalScheduled?: number;
+  totalCompleted?: number;
+  totalCancelled?: number;
+  totalRevenue?: number;
+  cpl?: number | null;
+  roi?: number | null;
+  conversionRate?: number; // scheduled / leads, %
   campaigns: CampaignStats[];
 }
 
@@ -61,18 +78,40 @@ export function buildOptimizationPrompt(ctx: AnalyticsContext): {
 }
 
 function formatPrompt(ctx: AnalyticsContext, mode: 'analytics' | 'optimization'): string {
+  const hasCrm = ctx.totalLeads !== undefined && ctx.totalLeads > 0;
+
   const campaignTable = ctx.campaigns
     .slice(0, 30)
-    .map(
-      (c) =>
-        `  • ${c.campaignName} | ${c.campaignType ?? '?'} | пок ${c.impressions.toLocaleString('ru-RU')} | кл ${c.clicks} | CTR ${c.ctr}% | CPC ${c.avgCpc}₽ | расход ${c.cost.toLocaleString('ru-RU')}₽`
-    )
+    .map((c) => {
+      const base = `  • ${c.campaignName} | ${c.campaignType ?? '?'} | пок ${c.impressions.toLocaleString('ru-RU')} | кл ${c.clicks} | CTR ${c.ctr}% | расход ${c.cost.toLocaleString('ru-RU')}₽`;
+      if (c.leads !== undefined && c.leads > 0) {
+        return (
+          base +
+          ` | лидов ${c.leads} | согласовано ${c.scheduled ?? 0} | завершено ${c.completed ?? 0} | выручка ${(c.revenue ?? 0).toLocaleString('ru-RU')}₽ | CPL ${c.cpl !== null && c.cpl !== undefined ? c.cpl + '₽' : '—'} | ROI ${c.roi !== null && c.roi !== undefined ? (c.roi * 100).toFixed(0) + '%' : '—'}`
+        );
+      }
+      return base;
+    })
     .join('\n');
 
   const intro =
     mode === 'analytics'
       ? `Сделай краткий разбор работы кампаний за последние ${ctx.days} дн. для владельца:`
       : `Дай конкретные рекомендации по оптимизации за последние ${ctx.days} дн.:`;
+
+  const crmBlock = hasCrm
+    ? `
+=== ПРОДАЖИ (из CRM) ===
+Лидов: ${ctx.totalLeads}
+Согласовано (оплачено): ${ctx.totalScheduled ?? 0}
+Завершено (игра прошла): ${ctx.totalCompleted ?? 0}
+Отказы: ${ctx.totalCancelled ?? 0}
+Выручка: ${(ctx.totalRevenue ?? 0).toLocaleString('ru-RU')} ₽
+Конверсия в оплату: ${ctx.conversionRate ?? 0}%
+CPL (цена оплаченного лида): ${ctx.cpl !== null && ctx.cpl !== undefined ? ctx.cpl + '₽' : '—'}
+ROI: ${ctx.roi !== null && ctx.roi !== undefined ? (ctx.roi * 100).toFixed(0) + '%' : '—'}
+`
+    : '\n(нет CRM-данных за период)\n';
 
   return `${intro}
 
@@ -87,9 +126,9 @@ ${config.BUSINESS_NAME}
 CTR средний: ${ctx.avgCtr}%
 Средняя CPC: ${ctx.avgCpc} ₽
 Расход: ${ctx.totalCost.toLocaleString('ru-RU')} ₽
-
+${crmBlock}
 === ПО КАМПАНИЯМ ===
 ${campaignTable || '  (нет активных кампаний)'}
 
-${mode === 'analytics' ? 'Разбор:' : 'Рекомендации:'}`;
+${mode === 'analytics' ? 'Разбор (опирайся на CPL/ROI/конверсию если данные есть):' : 'Рекомендации (приоритет — по CPL/ROI если есть):'}`;
 }

@@ -1,5 +1,6 @@
 import { fetchReport, type DateRangePreset } from '../yandex-direct/reports.js';
 import { listCampaigns } from '../yandex-direct/campaigns.js';
+import { db } from '../../lib/db.js';
 import * as ygpt from './yandex-gpt.js';
 import {
   buildAnalyticsPrompt,
@@ -54,14 +55,45 @@ export async function loadAnalyticsContext(days = 7): Promise<AnalyticsContext |
 
   if (rows.length === 0) return null;
 
+  // 3. CRM enrichment from local AdMetrics (filled by sync-leads).
+  //    Aggregate per-day per-ad rows up to per-campaign totals.
+  const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+  const crmRows = await db.adMetrics.findMany({
+    where: {
+      date: { gte: since },
+      ad: { adgroup: { campaignId: { in: activeIds.map((id) => BigInt(id)) } } },
+    },
+    include: { ad: { include: { adgroup: true } } },
+  });
+  const crmByCampaign = new Map<
+    number,
+    { leads: number; scheduled: number; completed: number; cancelled: number; revenue: number }
+  >();
+  for (const m of crmRows) {
+    const cid = Number(m.ad.adgroup.campaignId);
+    const acc = crmByCampaign.get(cid) ?? {
+      leads: 0, scheduled: 0, completed: 0, cancelled: 0, revenue: 0,
+    };
+    acc.leads += m.leads;
+    acc.scheduled += m.scheduled;
+    acc.completed += m.completed;
+    acc.cancelled += m.cancelled;
+    acc.revenue += Number(m.revenue ?? 0);
+    crmByCampaign.set(cid, acc);
+  }
+
   const campaigns: CampaignStats[] = rows.map((r) => {
+    const cid = parseInt(r.CampaignId ?? '0', 10) || 0;
     const impressions = parseInt(r.Impressions ?? '0', 10) || 0;
     const clicks = parseInt(r.Clicks ?? '0', 10) || 0;
     const cost = parseFloat(r.Cost ?? '0') || 0;
     const avgCpc = parseFloat(r.AvgCpc ?? '0') || 0;
     const ctr = parseFloat(r.Ctr ?? '0') || 0;
+    const crm = crmByCampaign.get(cid);
+    const cpl = crm && crm.scheduled > 0 ? Math.round((cost / crm.scheduled) * 100) / 100 : null;
+    const roi = crm && cost > 0 ? Math.round(((crm.revenue - cost) / cost) * 10000) / 10000 : null;
     return {
-      campaignId: parseInt(r.CampaignId ?? '0', 10) || 0,
+      campaignId: cid,
       campaignName: r.CampaignName ?? '?',
       campaignType: classifyCampaignType(r.CampaignName ?? ''),
       impressions,
@@ -69,6 +101,17 @@ export async function loadAnalyticsContext(days = 7): Promise<AnalyticsContext |
       cost: Math.round(cost * 100) / 100,
       ctr: Math.round(ctr * 100) / 100,
       avgCpc: Math.round(avgCpc * 100) / 100,
+      ...(crm
+        ? {
+            leads: crm.leads,
+            scheduled: crm.scheduled,
+            completed: crm.completed,
+            cancelled: crm.cancelled,
+            revenue: Math.round(crm.revenue * 100) / 100,
+            cpl,
+            roi,
+          }
+        : {}),
     };
   });
 
@@ -83,6 +126,18 @@ export async function loadAnalyticsContext(days = 7): Promise<AnalyticsContext |
     : 0;
   const avgCpc = totalClicks > 0 ? Math.round((totalCost / totalClicks) * 100) / 100 : 0;
 
+  // CRM totals
+  const totalLeads = campaigns.reduce((s, c) => s + (c.leads ?? 0), 0);
+  const totalScheduled = campaigns.reduce((s, c) => s + (c.scheduled ?? 0), 0);
+  const totalCompleted = campaigns.reduce((s, c) => s + (c.completed ?? 0), 0);
+  const totalCancelled = campaigns.reduce((s, c) => s + (c.cancelled ?? 0), 0);
+  const totalRevenue =
+    Math.round(campaigns.reduce((s, c) => s + (c.revenue ?? 0), 0) * 100) / 100;
+  const cpl = totalScheduled > 0 ? Math.round((totalCost / totalScheduled) * 100) / 100 : null;
+  const roi = totalCost > 0 ? Math.round(((totalRevenue - totalCost) / totalCost) * 10000) / 10000 : null;
+  const conversionRate =
+    totalLeads > 0 ? Math.round((totalScheduled / totalLeads) * 10000) / 100 : 0;
+
   return {
     days,
     totalImpressions,
@@ -91,6 +146,18 @@ export async function loadAnalyticsContext(days = 7): Promise<AnalyticsContext |
     avgCtr,
     avgCpc,
     campaigns,
+    ...(totalLeads > 0
+      ? {
+          totalLeads,
+          totalScheduled,
+          totalCompleted,
+          totalCancelled,
+          totalRevenue,
+          cpl,
+          roi,
+          conversionRate,
+        }
+      : {}),
   };
 }
 
