@@ -206,7 +206,8 @@ export async function loadAnalyticsContext(days = 7): Promise<AnalyticsContext |
     ...(allBuckets.leads > 0
       ? {
           totalLeads: allBuckets.leads,
-          totalInWork: allBuckets.inWork + allBuckets.newCount,
+          totalNew: allBuckets.newCount,
+          totalInWork: allBuckets.inWork,
           totalScheduled: allBuckets.scheduled,
           totalCompleted: allBuckets.completed,
           totalCancelled: allBuckets.cancelled,

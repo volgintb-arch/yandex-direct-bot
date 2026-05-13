@@ -29,7 +29,8 @@ export interface AnalyticsContext {
   avgCpc: number;
   // CRM totals (only present when bot has CRM-enriched AdMetrics)
   totalLeads?: number;
-  totalInWork?: number;
+  totalNew?: number; // status=new + stage не «в работе»
+  totalInWork?: number; // status=new + stage «в работе»
   totalScheduled?: number;
   totalCompleted?: number;
   totalCancelled?: number;
