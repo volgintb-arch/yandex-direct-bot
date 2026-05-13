@@ -1,6 +1,6 @@
 import { fetchReport, type DateRangePreset } from '../yandex-direct/reports.js';
 import { listCampaigns } from '../yandex-direct/campaigns.js';
-import { db } from '../../lib/db.js';
+import { fetchRecentLeads, type RecentLead } from '../crm-questlegends/client.js';
 import * as ygpt from './yandex-gpt.js';
 import {
   buildAnalyticsPrompt,
@@ -21,9 +21,74 @@ const DAYS_TO_PRESET: Record<number, DateRangePreset> = {
 
 function classifyCampaignType(name: string): 'search' | 'network' | 'mixed' {
   const lower = name.toLowerCase();
-  if (lower.includes('поиск') || lower.includes('search')) return 'search';
+  if (lower.includes('поиск') || lower.includes('search') || lower.includes('poisk')) return 'search';
   if (lower.includes('рся') || lower.includes('rsya') || lower.includes('network')) return 'network';
   return 'mixed';
+}
+
+// CRM aggregation helpers
+interface CrmBucket {
+  leads: number;
+  newCount: number;
+  inWork: number;
+  scheduled: number;
+  completed: number;
+  cancelled: number;
+  revenue: number;
+}
+
+function emptyBucket(): CrmBucket {
+  return { leads: 0, newCount: 0, inWork: 0, scheduled: 0, completed: 0, cancelled: 0, revenue: 0 };
+}
+
+function addLeadToBucket(b: CrmBucket, lead: RecentLead): void {
+  b.leads++;
+  // High-level status routing (per spec: scheduled = paid, revenue counts on scheduled)
+  if (lead.status === 'cancelled') {
+    b.cancelled++;
+  } else if (lead.status === 'completed') {
+    b.completed++;
+    b.scheduled++; // completed is also paid
+    b.revenue += Number(lead.revenue ?? 0);
+  } else if (lead.status === 'scheduled') {
+    b.scheduled++;
+    b.revenue += Number(lead.revenue ?? 0);
+  } else {
+    // Detailed stage from CRM (currentStageType / currentStageName) for context
+    const stageName = (lead.currentStageName ?? '').toLowerCase();
+    if (stageName.includes('работ')) b.inWork++;
+    else b.newCount++;
+  }
+}
+
+function normalizeCampaignKey(s: string | null): string {
+  if (!s) return '__none__';
+  return s.toLowerCase().replace(/[\s\-—_]+/g, '');
+}
+
+function findCrmForCampaign(directName: string, map: Map<string, CrmBucket>): CrmBucket | null {
+  const key = normalizeCampaignKey(directName);
+  if (map.has(key)) return map.get(key)!;
+  // Fuzzy fallback — Direct name "Квест Поиск" vs CRM utm_campaign "poisk".
+  for (const [k, v] of map) {
+    if (k && key.includes(k)) return v;
+    if (k && k.includes(key)) return v;
+  }
+  return null;
+}
+
+async function safeFetchLeads(from: Date, to: Date): Promise<RecentLead[]> {
+  try {
+    return await fetchRecentLeads({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      utmSource: 'yandex',
+      limit: 5000,
+    });
+  } catch (err) {
+    logger.warn({ err }, 'CRM /recent failed in analytics — continuing without CRM data');
+    return [];
+  }
 }
 
 /**
@@ -55,47 +120,38 @@ export async function loadAnalyticsContext(days = 7): Promise<AnalyticsContext |
 
   if (rows.length === 0) return null;
 
-  // 3. CRM enrichment from local AdMetrics (filled by sync-leads).
-  //    Aggregate per-day per-ad rows up to per-campaign totals.
-  const since = new Date(Date.now() - days * 24 * 3600 * 1000);
-  const crmRows = await db.adMetrics.findMany({
-    where: {
-      date: { gte: since },
-      ad: { adgroup: { campaignId: { in: activeIds.map((id) => BigInt(id)) } } },
-    },
-    include: { ad: { include: { adgroup: true } } },
-  });
-  const crmByCampaign = new Map<
-    number,
-    { leads: number; scheduled: number; completed: number; cancelled: number; revenue: number }
-  >();
-  for (const m of crmRows) {
-    const cid = Number(m.ad.adgroup.campaignId);
-    const acc = crmByCampaign.get(cid) ?? {
-      leads: 0, scheduled: 0, completed: 0, cancelled: 0, revenue: 0,
-    };
-    acc.leads += m.leads;
-    acc.scheduled += m.scheduled;
-    acc.completed += m.completed;
-    acc.cancelled += m.cancelled;
-    acc.revenue += Number(m.revenue ?? 0);
-    crmByCampaign.set(cid, acc);
+  // 3. CRM enrichment — pull leads with utm_source=yandex for the same window
+  //    directly from QL OS. This matches what the «Реклама» tab shows.
+  const periodFrom = new Date(Date.now() - days * 24 * 3600 * 1000);
+  const periodTo = new Date();
+  const crmLeads = await safeFetchLeads(periodFrom, periodTo);
+
+  // Group leads by Direct campaign name (utm_campaign matches CampaignName
+  // when our apply-engine sets utm_campaign={campaign_name}). Falls back to
+  // case-insensitive contains so "Квест Поиск" matches "poisk", "квест-поиск" etc.
+  const crmByCampaign = new Map<string, CrmBucket>();
+  for (const lead of crmLeads) {
+    const key = normalizeCampaignKey(lead.utm_campaign);
+    const acc = crmByCampaign.get(key) ?? emptyBucket();
+    addLeadToBucket(acc, lead);
+    crmByCampaign.set(key, acc);
   }
 
   const campaigns: CampaignStats[] = rows.map((r) => {
     const cid = parseInt(r.CampaignId ?? '0', 10) || 0;
+    const name = r.CampaignName ?? '?';
     const impressions = parseInt(r.Impressions ?? '0', 10) || 0;
     const clicks = parseInt(r.Clicks ?? '0', 10) || 0;
     const cost = parseFloat(r.Cost ?? '0') || 0;
     const avgCpc = parseFloat(r.AvgCpc ?? '0') || 0;
     const ctr = parseFloat(r.Ctr ?? '0') || 0;
-    const crm = crmByCampaign.get(cid);
+    const crm = findCrmForCampaign(name, crmByCampaign);
     const cpl = crm && crm.scheduled > 0 ? Math.round((cost / crm.scheduled) * 100) / 100 : null;
     const roi = crm && cost > 0 ? Math.round(((crm.revenue - cost) / cost) * 10000) / 10000 : null;
     return {
       campaignId: cid,
-      campaignName: r.CampaignName ?? '?',
-      campaignType: classifyCampaignType(r.CampaignName ?? ''),
+      campaignName: name,
+      campaignType: classifyCampaignType(name),
       impressions,
       clicks,
       cost: Math.round(cost * 100) / 100,
@@ -104,6 +160,7 @@ export async function loadAnalyticsContext(days = 7): Promise<AnalyticsContext |
       ...(crm
         ? {
             leads: crm.leads,
+            inWork: crm.inWork,
             scheduled: crm.scheduled,
             completed: crm.completed,
             cancelled: crm.cancelled,
@@ -126,17 +183,17 @@ export async function loadAnalyticsContext(days = 7): Promise<AnalyticsContext |
     : 0;
   const avgCpc = totalClicks > 0 ? Math.round((totalCost / totalClicks) * 100) / 100 : 0;
 
-  // CRM totals
-  const totalLeads = campaigns.reduce((s, c) => s + (c.leads ?? 0), 0);
-  const totalScheduled = campaigns.reduce((s, c) => s + (c.scheduled ?? 0), 0);
-  const totalCompleted = campaigns.reduce((s, c) => s + (c.completed ?? 0), 0);
-  const totalCancelled = campaigns.reduce((s, c) => s + (c.cancelled ?? 0), 0);
-  const totalRevenue =
-    Math.round(campaigns.reduce((s, c) => s + (c.revenue ?? 0), 0) * 100) / 100;
-  const cpl = totalScheduled > 0 ? Math.round((totalCost / totalScheduled) * 100) / 100 : null;
-  const roi = totalCost > 0 ? Math.round(((totalRevenue - totalCost) / totalCost) * 10000) / 10000 : null;
+  // CRM totals — count from ALL fetched leads, not just matched-to-campaign
+  // (this matches what the «Реклама» tab shows on QL OS).
+  const allBuckets = emptyBucket();
+  for (const lead of crmLeads) addLeadToBucket(allBuckets, lead);
+
+  const cpl = allBuckets.scheduled > 0 ? Math.round((totalCost / allBuckets.scheduled) * 100) / 100 : null;
+  const roi = totalCost > 0
+    ? Math.round(((allBuckets.revenue - totalCost) / totalCost) * 10000) / 10000
+    : null;
   const conversionRate =
-    totalLeads > 0 ? Math.round((totalScheduled / totalLeads) * 10000) / 100 : 0;
+    allBuckets.leads > 0 ? Math.round((allBuckets.scheduled / allBuckets.leads) * 10000) / 100 : 0;
 
   return {
     days,
@@ -146,13 +203,14 @@ export async function loadAnalyticsContext(days = 7): Promise<AnalyticsContext |
     avgCtr,
     avgCpc,
     campaigns,
-    ...(totalLeads > 0
+    ...(allBuckets.leads > 0
       ? {
-          totalLeads,
-          totalScheduled,
-          totalCompleted,
-          totalCancelled,
-          totalRevenue,
+          totalLeads: allBuckets.leads,
+          totalInWork: allBuckets.inWork + allBuckets.newCount,
+          totalScheduled: allBuckets.scheduled,
+          totalCompleted: allBuckets.completed,
+          totalCancelled: allBuckets.cancelled,
+          totalRevenue: Math.round(allBuckets.revenue * 100) / 100,
           cpl,
           roi,
           conversionRate,

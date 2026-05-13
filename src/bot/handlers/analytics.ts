@@ -64,12 +64,13 @@ export async function handleAnalytics(ctx: SessionContext, days = 7): Promise<vo
     const crmBlock = hasCrm
       ? [
           '',
-          '*💰 Из CRM:*',
-          `Лидов: *${data.totalLeads}*  ·  Согласовано (оплачено): *${data.totalScheduled ?? 0}*`,
-          `Завершено: *${data.totalCompleted ?? 0}*  ·  Отказы: *${data.totalCancelled ?? 0}*`,
-          `Конверсия в оплату: *${data.conversionRate ?? 0}%*`,
-          `Выручка: *${(data.totalRevenue ?? 0).toLocaleString('ru-RU')}₽*`,
-          `CPL: *${data.cpl !== null && data.cpl !== undefined ? data.cpl + '₽' : '—'}*  ·  ROI: *${data.roi !== null && data.roi !== undefined ? (data.roi * 100).toFixed(0) + '%' : '—'}*`,
+          '*📈 По воронке CRM (yandex):*',
+          `📥 Лидов всего: *${data.totalLeads}*`,
+          `🔄 В работе / Новые: *${data.totalInWork ?? 0}*  ·  ✅ Согласовано / оплачено: *${data.totalScheduled ?? 0}*`,
+          `🎉 Завершено: *${data.totalCompleted ?? 0}*  ·  ❌ Отказы: *${data.totalCancelled ?? 0}*`,
+          `📊 Конверсия в оплату: *${data.conversionRate ?? 0}%*`,
+          `💵 Выручка: *${(data.totalRevenue ?? 0).toLocaleString('ru-RU')}₽*`,
+          `💸 CPL: *${data.cpl !== null && data.cpl !== undefined ? data.cpl + '₽' : '—'}*  ·  📈 ROI: *${data.roi !== null && data.roi !== undefined ? (data.roi * 100).toFixed(0) + '%' : '—'}*`,
         ]
       : ['', '_⚠️ CRM-данных пока нет — запусти `/sync` и подожди появления первых лидов._'];
 

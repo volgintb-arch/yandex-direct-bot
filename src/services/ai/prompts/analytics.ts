@@ -11,6 +11,7 @@ export interface CampaignStats {
   avgCpc: number; // ₽
   // CRM enrichment (filled when bot has AdMetrics → CRM mapping)
   leads?: number;
+  inWork?: number; // в работе (детальный этап)
   scheduled?: number; // оплаченные лиды
   completed?: number;
   cancelled?: number;
@@ -28,6 +29,7 @@ export interface AnalyticsContext {
   avgCpc: number;
   // CRM totals (only present when bot has CRM-enriched AdMetrics)
   totalLeads?: number;
+  totalInWork?: number;
   totalScheduled?: number;
   totalCompleted?: number;
   totalCancelled?: number;
