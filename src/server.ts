@@ -14,15 +14,6 @@ import { resolve as pathResolve } from 'node:path';
 
 const app = new Hono();
 
-app.get('/', (c) =>
-  c.json({
-    ok: true,
-    service: 'yandex-direct-bot',
-    version: '0.1.0',
-    env: config.NODE_ENV,
-  })
-);
-
 app.get('/health', async (c) => {
   let dbOk = false;
   try {
