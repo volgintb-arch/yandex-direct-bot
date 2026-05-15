@@ -211,6 +211,17 @@ bot.on('message:text', async (ctx) => {
 });
 
 // ─── Bot meta ─────────────────────────────────────────────────────────
+
+/** Set the persistent menu button (next to text input) to open the Mini App. */
+export async function setMiniAppMenuButton(): Promise<void> {
+  const url =
+    config.TELEGRAM_WEBHOOK_URL?.replace('/api/telegram/webhook', '') ??
+    'https://direct-bot.questlegends.ru';
+  await bot.api.setChatMenuButton({
+    menu_button: { type: 'web_app', text: '📊 Дашборд', web_app: { url } },
+  });
+}
+
 export async function setBotCommands(): Promise<void> {
   await bot.api.setMyCommands([
     { command: 'start', description: 'Начало работы' },
@@ -233,6 +244,9 @@ bot.catch((err) => {
 export async function bootstrapBot(): Promise<void> {
   await ensureBootstrapAdmin();
   await setBotCommands().catch((err) => logger.warn({ err }, 'failed to set commands'));
+  await setMiniAppMenuButton().catch((err) =>
+    logger.warn({ err }, 'failed to set mini-app menu button')
+  );
 }
 
 export async function startBotPolling(): Promise<void> {

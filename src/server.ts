@@ -6,7 +6,11 @@ import { logger } from './lib/logger.js';
 import { db, disconnectDb } from './lib/db.js';
 import { bot, bootstrapBot, startBotPolling, stopBot } from './bot/index.js';
 import marketingApi from './miniapp-api/marketing.js';
+import miniappApi from './miniapp-api/miniapp.js';
 import { startScheduler } from './jobs/scheduler.js';
+import { serveStatic } from '@hono/node-server/serve-static';
+import { existsSync } from 'node:fs';
+import { resolve as pathResolve } from 'node:path';
 
 const app = new Hono();
 
@@ -40,6 +44,22 @@ app.get('/health', async (c) => {
 // Marketing aggregates API for QuestLegends OS to consume
 // (cost / impressions / clicks per campaign and ad).
 app.route('/api/marketing', marketingApi);
+
+// Mini App API (Telegram WebApp). Auth via X-Telegram-Init-Data header.
+app.route('/api/miniapp', miniappApi);
+
+// Serve the Mini App static bundle from miniapp/dist if it was built.
+const miniappDist = pathResolve(process.cwd(), 'miniapp/dist');
+if (existsSync(miniappDist)) {
+  app.use('/assets/*', serveStatic({ root: './miniapp/dist' }));
+  app.use('/favicon.ico', serveStatic({ root: './miniapp/dist' }));
+  // SPA fallback — every non-API path serves index.html so the React router takes over.
+  app.get('*', async (c, next) => {
+    if (c.req.path.startsWith('/api/')) return next();
+    return serveStatic({ path: './miniapp/dist/index.html' })(c, next);
+  });
+  logger.info({ dir: miniappDist }, '🪟 mini-app static mounted at /');
+}
 
 // Telegram webhook (used in production when TELEGRAM_USE_POLLING=false)
 if (!config.TELEGRAM_USE_POLLING) {

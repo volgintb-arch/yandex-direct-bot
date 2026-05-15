@@ -1,5 +1,10 @@
+import { InlineKeyboard } from 'grammy';
 import type { SessionContext } from '../middlewares/session.js';
 import { config } from '../../lib/config.js';
+
+function appUrl(): string {
+  return config.TELEGRAM_WEBHOOK_URL?.replace('/api/telegram/webhook', '') ?? 'https://direct-bot.questlegends.ru';
+}
 
 export async function handleStart(ctx: SessionContext): Promise<void> {
   const isAdmin = ctx.authUser.role === 'admin';
@@ -26,7 +31,8 @@ export async function handleStart(ctx: SessionContext): Promise<void> {
     '_Полный функционал создания кампаний — в следующей фазе._',
   ].filter(Boolean);
 
-  await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+  const kb = new InlineKeyboard().webApp('📊 Открыть дашборд', appUrl());
+  await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown', reply_markup: kb });
 }
 
 export async function handleHelp(ctx: SessionContext): Promise<void> {

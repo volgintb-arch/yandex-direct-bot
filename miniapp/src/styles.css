@@ -1,0 +1,146 @@
+:root {
+  --tg-bg: var(--tg-theme-bg-color, #17212b);
+  --tg-text: var(--tg-theme-text-color, #f5f5f5);
+  --tg-hint: var(--tg-theme-hint-color, #708499);
+  --tg-link: var(--tg-theme-link-color, #6ab3f3);
+  --tg-button: var(--tg-theme-button-color, #5288c1);
+  --tg-button-text: var(--tg-theme-button-text-color, #ffffff);
+  --tg-secondary: var(--tg-theme-secondary-bg-color, #232e3c);
+  --tg-section-bg: var(--tg-theme-section-bg-color, #1c2733);
+  --tg-section-header: var(--tg-theme-section-header-text-color, #6ab3f3);
+  --tg-accent: var(--tg-theme-accent-text-color, #6ab3f3);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--tg-bg);
+  color: var(--tg-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  padding: 16px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+h1 { font-size: 22px; margin: 0 0 16px; font-weight: 700; }
+h2 { font-size: 17px; margin: 24px 0 8px; font-weight: 600; color: var(--tg-section-header); }
+h3 { font-size: 15px; margin: 8px 0; font-weight: 600; }
+
+.muted { color: var(--tg-hint); font-size: 13px; }
+.error { color: #f44336; padding: 12px; background: rgba(244,67,54,.1); border-radius: 8px; }
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 16px 0;
+  background: var(--tg-secondary);
+  border-radius: 10px;
+  padding: 4px;
+}
+.tabs button, .tabs a {
+  flex: 1;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: var(--tg-hint);
+  font-size: 13px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-decoration: none;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tabs button.active, .tabs a.active {
+  background: var(--tg-button);
+  color: var(--tg-button-text);
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0;
+}
+.kpi {
+  background: var(--tg-section-bg);
+  border-radius: 10px;
+  padding: 12px;
+}
+.kpi-label { font-size: 11px; color: var(--tg-hint); text-transform: uppercase; letter-spacing: 0.5px; }
+.kpi-value { font-size: 20px; font-weight: 700; margin-top: 4px; }
+.kpi-value.positive { color: #4caf50; }
+.kpi-value.negative { color: #f44336; }
+
+.section {
+  background: var(--tg-section-bg);
+  border-radius: 10px;
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.row:last-child { border-bottom: none; }
+.row .label { color: var(--tg-text); }
+.row .value { color: var(--tg-hint); font-variant-numeric: tabular-nums; }
+
+.period-switch {
+  display: flex;
+  gap: 6px;
+  margin: 12px 0;
+}
+.period-switch button {
+  flex: 1;
+  padding: 8px;
+  background: var(--tg-secondary);
+  color: var(--tg-text);
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.period-switch button.active {
+  background: var(--tg-button);
+  color: var(--tg-button-text);
+}
+
+.campaign-card {
+  background: var(--tg-section-bg);
+  padding: 12px;
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+.campaign-card .title { font-weight: 600; margin-bottom: 6px; }
+.campaign-card .meta { font-size: 12px; color: var(--tg-hint); }
+.campaign-card .stats { display: flex; gap: 12px; margin-top: 8px; font-size: 12px; }
+.campaign-card .stats span strong { color: var(--tg-text); display: block; font-size: 14px; }
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--tg-hint);
+}
+
+.loader {
+  text-align: center;
+  padding: 40px;
+  color: var(--tg-hint);
+}
