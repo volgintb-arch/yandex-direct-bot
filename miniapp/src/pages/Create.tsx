@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, type Variant } from '../lib/api.js';
+import ImagePicker from '../components/ImagePicker.js';
 
 type Kind = 'search' | 'network';
 
@@ -12,6 +13,7 @@ export default function Create() {
   const [cpl, setCpl] = useState<string>('');
   const [url, setUrl] = useState('');
   const [brief, setBrief] = useState('');
+  const [imageHash, setImageHash] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [variants, setVariants] = useState<Variant[] | null>(null);
@@ -34,6 +36,7 @@ export default function Create() {
         cpl: cpl ? parseInt(cpl, 10) : undefined,
         url: url.trim() || undefined,
         brief: brief.trim(),
+        imageHash: kind === 'network' ? imageHash : null,
       });
       setVariants(r.variants);
       setApprovalId(r.approvalId);
@@ -110,6 +113,10 @@ export default function Create() {
               placeholder="Реклама квестов на день рождения для детей 10-14 лет. Подчеркнуть атмосферу приключения, новые сюжеты на тему пиратов. Скидка 15% на первое бронирование."
             />
           </div>
+
+          {kind === 'network' && (
+            <ImagePicker value={imageHash} onChange={setImageHash} />
+          )}
 
           {error && <div className="error" style={{ marginTop: 12 }}>{error}</div>}
 

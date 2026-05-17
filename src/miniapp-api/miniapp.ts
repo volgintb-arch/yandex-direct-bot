@@ -132,7 +132,7 @@ app.get('/campaigns/:id', async (c) => {
     const meta = all[0];
     if (!meta) return c.json({ error: 'campaign not found' }, 404);
 
-    const [perDayRows, ads, leads] = await Promise.all([
+    const [perDayRows, ads, allYandexLeads] = await Promise.all([
       fetchReport({
         reportName: `mini-camp-${campaignId}-${Date.now()}`,
         reportType: 'CAMPAIGN_PERFORMANCE_REPORT',
@@ -146,10 +146,25 @@ app.get('/campaigns/:id', async (c) => {
       fetchRecentLeads({
         from: fromDate.toISOString(),
         to: toDate.toISOString(),
-        utmCampaign: meta.Name,
+        utmSource: 'yandex',
         limit: 5000,
       }).catch(() => []),
     ]);
+
+    // Fuzzy match leads to this campaign by name / id (utm_campaign in CRM
+    // may differ from Direct CampaignName).
+    const normalize = (s: string | null | undefined) =>
+      (s ?? '').toLowerCase().replace(/[\s\-—_]+/g, '');
+    const directKey = normalize(meta.Name);
+    const adIds = new Set(ads.map((a) => String(a.Id)));
+    const leads = allYandexLeads.filter((l) => {
+      const utmKey = normalize(l.utm_campaign);
+      if (utmKey && (utmKey === directKey || utmKey.includes(directKey) || directKey.includes(utmKey)))
+        return true;
+      // Fallback: match via utm_content = ad_id of this campaign
+      if (l.utm_content && adIds.has(l.utm_content)) return true;
+      return false;
+    });
 
     const series = perDayRows
       .map((r) => ({
@@ -217,6 +232,183 @@ app.get('/campaigns/:id', async (c) => {
     });
   } catch (err) {
     logger.error({ err, campaignId }, 'campaign details failed');
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+/* ───── POST /api/miniapp/campaigns/:id/optimize ───── */
+app.post('/campaigns/:id/optimize', async (c) => {
+  const id = parseInt(c.req.param('id'), 10);
+  if (!id) return c.json({ error: 'bad id' }, 400);
+  const days = parseInt(c.req.query('days') ?? '30', 10) || 30;
+  try {
+    const fromDate = new Date(Date.now() - days * 24 * 3600 * 1000);
+    const toDate = new Date();
+    const [all, perDay, perAd, allLeads] = await Promise.all([
+      listCampaigns({ ids: [id] }),
+      fetchReport({
+        reportName: `opt-camp-${id}-${Date.now()}`,
+        reportType: 'CAMPAIGN_PERFORMANCE_REPORT',
+        dateRange: 'CUSTOM_DATE',
+        dateFrom: fromDate.toISOString().slice(0, 10),
+        dateTo: toDate.toISOString().slice(0, 10),
+        fieldNames: ['Impressions', 'Clicks', 'Cost', 'Ctr', 'AvgCpc'],
+        filter: { campaignIds: [id] },
+      }),
+      fetchReport({
+        reportName: `opt-ads-${id}-${Date.now()}`,
+        reportType: 'AD_PERFORMANCE_REPORT',
+        dateRange: 'CUSTOM_DATE',
+        dateFrom: fromDate.toISOString().slice(0, 10),
+        dateTo: toDate.toISOString().slice(0, 10),
+        fieldNames: ['AdId', 'Impressions', 'Clicks', 'Cost', 'Ctr'],
+        filter: { campaignIds: [id] },
+      }),
+      fetchRecentLeads({
+        from: fromDate.toISOString(),
+        to: toDate.toISOString(),
+        utmSource: 'yandex',
+        limit: 5000,
+      }).catch(() => []),
+    ]);
+    const meta = all[0];
+    if (!meta) return c.json({ error: 'campaign not found' }, 404);
+    const ads = await listAds({ campaignIds: [id] });
+
+    const normalize = (s: string | null | undefined) =>
+      (s ?? '').toLowerCase().replace(/[\s\-—_]+/g, '');
+    const directKey = normalize(meta.Name);
+    const adIds = new Set(ads.map((a) => String(a.Id)));
+    const leads = allLeads.filter((l) => {
+      const utmKey = normalize(l.utm_campaign);
+      if (utmKey && (utmKey === directKey || utmKey.includes(directKey) || directKey.includes(utmKey)))
+        return true;
+      if (l.utm_content && adIds.has(l.utm_content)) return true;
+      return false;
+    });
+
+    const totals = perDay.reduce(
+      (a, r) => ({
+        impressions: a.impressions + (parseInt(r.Impressions ?? '0', 10) || 0),
+        clicks: a.clicks + (parseInt(r.Clicks ?? '0', 10) || 0),
+        cost: a.cost + (parseFloat(r.Cost ?? '0') || 0),
+      }),
+      { impressions: 0, clicks: 0, cost: 0 }
+    );
+    let scheduled = 0, completed = 0, cancelled = 0, revenue = 0;
+    for (const l of leads) {
+      if (l.status === 'cancelled') cancelled++;
+      else if (l.status === 'completed') { completed++; scheduled++; revenue += Number(l.revenue ?? 0); }
+      else if (l.status === 'scheduled') { scheduled++; revenue += Number(l.revenue ?? 0); }
+    }
+
+    const adById = new Map(ads.map((a) => [a.Id, a]));
+    const adRows = perAd.map((r) => {
+      const aid = parseInt(r.AdId ?? '0', 10);
+      const a = adById.get(aid);
+      const t = a?.TextAd ?? a?.TextImageAd;
+      return {
+        id: aid,
+        title1: t?.Title ?? '?',
+        title2: t?.Title2 ?? null,
+        text: t?.Text ?? '?',
+        cost: parseFloat(r.Cost ?? '0') || 0,
+        clicks: parseInt(r.Clicks ?? '0', 10) || 0,
+        ctr: parseFloat(r.Ctr ?? '0') || 0,
+      };
+    });
+
+    const ygpt = await import('../services/ai/yandex-gpt.js');
+    const prompt = `Ты — маркетолог. Дай 5-7 конкретных рекомендаций по оптимизации этой кампании за ${days} дней.
+
+КАМПАНИЯ: ${meta.Name} (${meta.Type}, ${meta.State})
+СВОДКА:
+  Показов: ${totals.impressions.toLocaleString('ru-RU')}
+  Кликов: ${totals.clicks}
+  CTR: ${totals.impressions ? Math.round((totals.clicks / totals.impressions) * 10000) / 100 : 0}%
+  Расход: ${totals.cost.toFixed(2)}₽
+  Лидов: ${leads.length}  ·  Оплачено: ${scheduled}  ·  Завершено: ${completed}  ·  Отказы: ${cancelled}
+  Выручка: ${revenue.toFixed(2)}₽
+  CPL: ${scheduled > 0 ? Math.round((totals.cost / scheduled) * 100) / 100 : '—'}₽
+  ROI: ${totals.cost > 0 ? Math.round(((revenue - totals.cost) / totals.cost) * 100) : '—'}%
+
+ПО ОБЪЯВЛЕНИЯМ (cost/CTR/кликов):
+${adRows
+  .slice(0, 10)
+  .map((a, i) => `  ${i + 1}. "${a.title1}" — ${a.cost.toFixed(0)}₽ · CTR ${a.ctr}% · ${a.clicks} кл`)
+  .join('\n')}
+
+Рекомендации:
+- Каждый пункт с эмодзи в начале
+- Конкретные действия (остановить, снизить ставку, переписать заголовок, добавить минус-слова и т.п.)
+- Если что-то приносит прибыль — отдельный пункт «масштабировать это»
+- Markdown, без JSON`;
+
+    const system = 'Ты — маркетолог. Никаких ограничений на разбор технических метрик бизнеса.';
+    let tips = '';
+    try {
+      tips = await ygpt.generate('pro', { system, prompt, temperature: 0.4, maxTokens: 2500 });
+    } catch (err) {
+      logger.warn({ err }, 'optimize Pro failed, trying Lite');
+      try { tips = await ygpt.generate('lite', { system, prompt, temperature: 0.4, maxTokens: 2000 }); }
+      catch (e) { logger.warn({ err: e }, 'optimize Lite failed'); }
+    }
+    return c.json({ campaignId: id, days, tips: tips || 'ИИ не смог сгенерировать.' });
+  } catch (err) {
+    logger.error({ err, id }, 'optimize failed');
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+
+/* ───── /api/miniapp/approvals/:id ───── */
+app.get('/approvals/:id', async (c) => {
+  const id = c.req.param('id');
+  const a = await db.approval.findUnique({ where: { id } });
+  if (!a) return c.json({ error: 'not found' }, 404);
+  return c.json({
+    id: a.id,
+    status: a.status,
+    campaignType: a.campaignType,
+    geo: a.geo,
+    dailyBudget: a.dailyBudget,
+    targetCpl: a.targetCpl,
+    siteUrl: a.siteUrl,
+    selectedVariantId: a.selectedVariantId,
+    variants: a.variants,
+    selectedImageHashes: a.selectedImageHashes,
+    createdAt: a.createdAt,
+    appliedAt: a.appliedAt,
+    yandexCampaignId: a.yandexCampaignId?.toString() ?? null,
+    yandexAdId: a.yandexAdId?.toString() ?? null,
+  });
+});
+
+/* ───── POST /api/miniapp/approvals/:id/revise ─────
+ * Apply free-form revision text to a chosen variant (re-runs AI).
+ */
+app.post('/approvals/:id/revise', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json().catch(() => null) as
+    | { variantId: string; revisionText: string }
+    | null;
+  if (!body?.variantId || !body.revisionText) return c.json({ error: 'variantId + revisionText required' }, 400);
+  const a = await db.approval.findUnique({ where: { id } });
+  if (!a || a.status !== 'pending') return c.json({ error: 'not pending' }, 404);
+  const variants = a.variants as unknown as Array<{ variant_id: string }>;
+  const cur = variants.find((v) => v.variant_id === body.variantId);
+  if (!cur) return c.json({ error: 'variant not found' }, 404);
+  try {
+    const { reviseVariant } = await import('../services/ai/campaign-builder.js');
+    const updated = await reviseVariant(cur as never, body.revisionText);
+    const idx = variants.findIndex((v) => v.variant_id === body.variantId);
+    if (idx >= 0) variants[idx] = { ...updated, variant_id: cur.variant_id } as never;
+    await db.approval.update({
+      where: { id },
+      data: { variants: variants as unknown as object },
+    });
+    return c.json({ ok: true, variant: variants[idx] });
+  } catch (err) {
+    logger.error({ err }, 'revise from miniapp failed');
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
   }
 });
@@ -459,6 +651,53 @@ app.get('/images', async (c) => {
     select: { hash: true, name: true, description: true, url: true, format: true },
   });
   return c.json({ images });
+});
+
+/* ───── POST /api/miniapp/upload-image ─────
+ * Accepts a base64-encoded image (DataURL or raw base64). Auto-crops to
+ * 1080×608 (TextImageAd WIDE) and uploads to Direct. Returns hash.
+ */
+app.post('/upload-image', async (c) => {
+  const body = await c.req.json().catch(() => null) as
+    | { name?: string; dataUrl?: string }
+    | null;
+  if (!body?.dataUrl) return c.json({ error: 'dataUrl required' }, 400);
+
+  // Accept "data:image/jpeg;base64,XXX" or raw base64
+  let b64 = body.dataUrl;
+  const commaIdx = b64.indexOf('base64,');
+  if (commaIdx >= 0) b64 = b64.slice(commaIdx + 'base64,'.length);
+
+  try {
+    const raw = Buffer.from(b64, 'base64');
+    const { prepareForDirect } = await import('../services/yandex-direct/image-prepare.js');
+    const prepared = await prepareForDirect(raw);
+    const { uploadAdImage } = await import('../services/yandex-direct/imageads.js');
+    const hash = await uploadAdImage({
+      imageBase64: prepared.buffer.toString('base64'),
+      name: body.name ? body.name.slice(0, 50) : `miniapp-${Date.now()}`,
+    });
+    const tgUserId = c.get('tgUserId');
+    await db.yandexImage.upsert({
+      where: { hash },
+      create: {
+        hash,
+        name: body.name ?? null,
+        format: 'JPEG',
+        uploadedBy: BigInt(tgUserId),
+      },
+      update: {},
+    });
+    return c.json({
+      hash,
+      width: prepared.width,
+      height: prepared.height,
+      target: prepared.target.name,
+    });
+  } catch (err) {
+    logger.error({ err }, 'upload-image from miniapp failed');
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  }
 });
 
 export default app;

@@ -175,6 +175,11 @@ export const api = {
     post<{ ok: true }>('/knowledge/document', input),
   deleteKnowledge: (id: number) => post<{ ok: true }>(`/knowledge/${id}/delete`),
   images: () => request<{ images: ImageEntry[] }>('/images'),
+  uploadImage: (dataUrl: string, name?: string) =>
+    post<{ hash: string; width: number; height: number; target: string }>('/upload-image', {
+      dataUrl,
+      name,
+    }),
   createCampaign: (input: {
     kind: 'search' | 'network';
     geo: string;
