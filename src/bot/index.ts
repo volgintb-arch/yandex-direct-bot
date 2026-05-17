@@ -218,7 +218,7 @@ export async function setMiniAppMenuButton(): Promise<void> {
     config.TELEGRAM_WEBHOOK_URL?.replace('/api/telegram/webhook', '') ??
     'https://direct-bot.questlegends.ru';
   await bot.api.setChatMenuButton({
-    menu_button: { type: 'web_app', text: '📊 Дашборд', web_app: { url } },
+    menu_button: { type: 'web_app', text: '🚀 Открыть приложение', web_app: { url } },
   });
 }
 

@@ -31,7 +31,7 @@ export async function handleStart(ctx: SessionContext): Promise<void> {
     '_Полный функционал создания кампаний — в следующей фазе._',
   ].filter(Boolean);
 
-  const kb = new InlineKeyboard().webApp('📊 Открыть дашборд', appUrl());
+  const kb = new InlineKeyboard().webApp('🚀 Открыть приложение', appUrl());
   await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown', reply_markup: kb });
 }
 

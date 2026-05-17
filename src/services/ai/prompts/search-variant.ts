@@ -11,6 +11,7 @@ export interface BuildSearchVariantPromptInput {
   wordstatTop: Array<{ phrase: string; count: number }>;
   learnedRules?: string | null;
   topAdsExamples?: Array<{ title1: string; title2?: string; text: string; ctr: number }>;
+  documents?: string | null;
 }
 
 const SYSTEM = `Ты — копирайтер контекстной рекламы Яндекс.Директ. Тебе дают задачу + конкретную стратегию. Подготовь ОДИН готовый вариант: имена, ключевики, минус-слова, объявление.
@@ -44,6 +45,10 @@ export function buildSearchVariantPrompt(input: BuildSearchVariantPromptInput): 
         .join('\n')}\n`
     : '';
 
+  const docsBlock = input.documents?.trim()
+    ? `\nДОКУМЕНТЫ КЛИЕНТА (брифы, оферы, описания):\n${input.documents.trim()}\n`
+    : '';
+
   const prompt = `Подготовь ОДИН вариант поисковой кампании Яндекс.Директ.
 
 === БИЗНЕС ===
@@ -68,7 +73,7 @@ ${input.brief.trim()}
 
 === ТОП-ЗАПРОСЫ ИЗ WORDSTAT ===
 ${wordstatBlock}
-${rulesBlock}${topAdsBlock}
+${rulesBlock}${topAdsBlock}${docsBlock}
 === ТРЕБОВАНИЯ ===
 - Имя кампании: «${input.geo}-Поиск»
 - Имя группы: используй название стратегии «${input.strategy.name}» (можно адаптировать)

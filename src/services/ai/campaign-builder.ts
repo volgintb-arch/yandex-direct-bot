@@ -97,6 +97,7 @@ export async function buildSearchCampaign(
       wordstatTop: wordstatResp,
       learnedRules: knowledge.rules,
       topAdsExamples: knowledge.topAds,
+      documents: knowledge.documents,
     });
     try {
       let variant = await ygpt.generateJson<CampaignVariant>('pro', {

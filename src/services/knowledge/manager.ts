@@ -4,6 +4,7 @@ export interface KnowledgeContext {
   rules: string | null;
   topAds: Array<{ title1: string; title2?: string; text: string; ctr: number }>;
   failures: string | null;
+  documents: string | null;
 }
 
 /**
@@ -17,7 +18,7 @@ export async function getKnowledgeContext(opts: {
 }): Promise<KnowledgeContext> {
   const cityFilter = opts.city ? [{ city: opts.city }, { city: null }] : [{ city: null }];
 
-  const [rulesEntries, topAdEntries, failureEntries] = await Promise.all([
+  const [rulesEntries, topAdEntries, failureEntries, documentEntries] = await Promise.all([
     db.knowledgeEntry.findMany({
       where: {
         type: 'learned_rules',
@@ -47,6 +48,16 @@ export async function getKnowledgeContext(opts: {
       },
       orderBy: { createdAt: 'desc' },
       take: 5,
+    }),
+    db.knowledgeEntry.findMany({
+      where: {
+        type: 'document',
+        isActive: true,
+        scope: { in: [opts.scope, 'global'] },
+        OR: cityFilter,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
     }),
   ]);
 
@@ -85,7 +96,20 @@ export async function getKnowledgeContext(opts: {
         .join('\n')
     : null;
 
-  return { rules, topAds, failures };
+  // User-uploaded documents (briefs, offers, descriptions of services etc).
+  const documents = documentEntries.length
+    ? documentEntries
+        .map((e) => {
+          const d = e.data as { name?: string; text?: string };
+          if (!d.text) return '';
+          const heading = d.name ? `### ${d.name}\n` : '';
+          return heading + d.text.slice(0, 3000);
+        })
+        .filter(Boolean)
+        .join('\n\n')
+    : null;
+
+  return { rules, topAds, failures, documents };
 }
 
 /** Save a knowledge entry. Append-only — old entries stay (with isActive flag). */

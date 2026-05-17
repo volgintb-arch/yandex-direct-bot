@@ -12,15 +12,31 @@ export default function Approvals() {
   const [status, setStatus] = useState('pending');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  useEffect(() => {
+  function load() {
     setLoading(true);
     api
       .approvals(status)
       .then((r) => setItems(r.approvals))
-      .catch((e) => setError(e.message))
+      .catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false));
-  }, [status]);
+  }
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [status]);
+
+  async function reject(id: string) {
+    if (!confirm('Удалить (отклонить) этот черновик?')) return;
+    setBusyId(id);
+    try {
+      await api.rejectApproval(id);
+      setItems((prev) => prev.filter((a) => a.id !== id));
+    } catch (e) {
+      alert('❌ ' + (e as Error).message);
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   return (
     <div>
@@ -51,6 +67,24 @@ export default function Approvals() {
             <div className="meta" style={{ marginTop: 4 }}>
               ✅ В Direct: ad #{a.yandexAdId} · campaign #{a.yandexCampaignId}
             </div>
+          )}
+          {status === 'pending' && (
+            <button
+              onClick={() => reject(a.id)}
+              disabled={busyId === a.id}
+              style={{
+                marginTop: 8,
+                padding: '6px 12px',
+                background: '#ef4444',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 6,
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              {busyId === a.id ? '...' : '🗑 Удалить'}
+            </button>
           )}
         </div>
       ))}
