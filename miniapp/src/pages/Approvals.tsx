@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, type Approval } from '../lib/api.js';
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
@@ -57,17 +58,23 @@ export default function Approvals() {
 
       {items.map((a) => (
         <div className="campaign-card" key={a.id}>
-          <div className="title">
-            {a.campaignType === 'search' ? '🔍' : '📡'} {a.geo} · {a.dailyBudget}₽/день
-          </div>
-          <div className="meta">
-            CPL цель: {a.targetCpl ?? '—'} · {new Date(a.createdAt).toLocaleString('ru-RU')}
-          </div>
-          {a.yandexAdId && (
-            <div className="meta" style={{ marginTop: 4 }}>
-              ✅ В Direct: ad #{a.yandexAdId} · campaign #{a.yandexCampaignId}
+          <Link
+            to={`/approvals/${a.id}`}
+            style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
+          >
+            <div className="title" style={{ cursor: 'pointer' }}>
+              {a.campaignType === 'search' ? '🔍' : '📡'} {a.geo} · {a.dailyBudget}₽/день
+              <span style={{ marginLeft: 6, color: 'var(--tg-link)', fontWeight: 400 }}>→</span>
             </div>
-          )}
+            <div className="meta">
+              CPL цель: {a.targetCpl ?? '—'} · {new Date(a.createdAt).toLocaleString('ru-RU')}
+            </div>
+            {a.yandexAdId && (
+              <div className="meta" style={{ marginTop: 4 }}>
+                ✅ В Direct: ad #{a.yandexAdId} · campaign #{a.yandexCampaignId}
+              </div>
+            )}
+          </Link>
           {status === 'pending' && (
             <button
               onClick={() => reject(a.id)}

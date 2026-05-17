@@ -500,6 +500,35 @@ app.post('/knowledge/:id/delete', async (c) => {
   return c.json({ ok: true });
 });
 
+/* ───── POST /api/miniapp/knowledge/:id/edit ───── */
+app.post('/knowledge/:id/edit', async (c) => {
+  const id = parseInt(c.req.param('id'), 10);
+  if (!id) return c.json({ error: 'bad id' }, 400);
+  const body = await c.req.json().catch(() => null) as
+    | { name?: string; text?: string; rules?: string; scope?: string }
+    | null;
+  if (!body) return c.json({ error: 'body required' }, 400);
+
+  const entry = await db.knowledgeEntry.findUnique({ where: { id } });
+  if (!entry) return c.json({ error: 'not found' }, 404);
+
+  const data = (entry.data as Record<string, unknown>) ?? {};
+  if (body.name !== undefined) data.name = body.name.slice(0, 200);
+  if (body.text !== undefined) data.text = body.text.slice(0, 50_000);
+  if (body.rules !== undefined) data.rules = body.rules.slice(0, 50_000);
+
+  await db.knowledgeEntry.update({
+    where: { id },
+    data: {
+      data: data as object,
+      ...(body.scope && ['search', 'network', 'global'].includes(body.scope)
+        ? { scope: body.scope }
+        : {}),
+    },
+  });
+  return c.json({ ok: true });
+});
+
 /* ───── POST /api/miniapp/create-campaign ─────
  * Run the full campaign-builder flow from the Mini App.
  * Creates an Approval ready to be picked up either from the bot

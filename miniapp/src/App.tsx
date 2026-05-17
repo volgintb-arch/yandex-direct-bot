@@ -3,6 +3,7 @@ import Dashboard from './pages/Dashboard.js';
 import Campaigns from './pages/Campaigns.js';
 import CampaignDetails from './pages/CampaignDetails.js';
 import Approvals from './pages/Approvals.js';
+import ApprovalDetails from './pages/ApprovalDetails.js';
 import Knowledge from './pages/Knowledge.js';
 import Create from './pages/Create.js';
 
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/campaigns" element={<Campaigns />} />
         <Route path="/campaigns/:id" element={<CampaignDetails />} />
         <Route path="/approvals" element={<Approvals />} />
+        <Route path="/approvals/:id" element={<ApprovalDetails />} />
         <Route path="/knowledge" element={<Knowledge />} />
       </Routes>
     </>

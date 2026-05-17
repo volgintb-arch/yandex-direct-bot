@@ -10,16 +10,33 @@ export default function CampaignDetails() {
   const [data, setData] = useState<Details | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState(30);
+  const [optTips, setOptTips] = useState<string | null>(null);
+  const [optimizing, setOptimizing] = useState(false);
 
   useEffect(() => {
     if (!id) return;
     setData(null);
     setError(null);
+    setOptTips(null);
     api
       .campaignDetails(Number(id), days)
       .then(setData)
       .catch((e) => setError((e as Error).message));
   }, [id, days]);
+
+  async function optimize() {
+    if (!id) return;
+    setOptimizing(true);
+    setOptTips(null);
+    try {
+      const r = await api.optimizeCampaign(Number(id), days);
+      setOptTips(r.tips);
+    } catch (e) {
+      alert('❌ ' + (e as Error).message);
+    } finally {
+      setOptimizing(false);
+    }
+  }
 
   if (error) return <div className="error">{error}</div>;
   if (!data) return <div className="muted">Загрузка...</div>;
@@ -79,6 +96,41 @@ export default function CampaignDetails() {
           </ResponsiveContainer>
         </div>
       )}
+
+      <div className="section">
+        <button
+          onClick={optimize}
+          disabled={optimizing}
+          style={{
+            width: '100%',
+            padding: 12,
+            background: 'var(--tg-button)',
+            color: 'var(--tg-button-text)',
+            border: 'none',
+            borderRadius: 10,
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          {optimizing ? '⏳ ИИ анализирует кампанию...' : '⚡ Оптимизировать через ИИ'}
+        </button>
+        {optTips && (
+          <div
+            style={{
+              marginTop: 10,
+              padding: 12,
+              background: 'var(--tg-secondary)',
+              borderRadius: 8,
+              whiteSpace: 'pre-wrap',
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
+          >
+            {optTips}
+          </div>
+        )}
+      </div>
 
       <h3>📝 Объявления ({data.ads.length})</h3>
       {data.ads.map((ad) => (

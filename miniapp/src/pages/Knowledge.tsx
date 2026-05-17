@@ -19,6 +19,10 @@ export default function Knowledge() {
   const [docText, setDocText] = useState('');
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editText, setEditText] = useState('');
+  const [editScope, setEditScope] = useState<'global' | 'search' | 'network'>('global');
 
   function load() {
     setLoading(true);
@@ -48,6 +52,39 @@ export default function Knowledge() {
       alert('❌ ' + (e as Error).message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  function startEdit(e: KnowledgeEntry) {
+    setEditingId(e.id);
+    const data = e.data as { name?: string; text?: string; rules?: string };
+    setEditName(data.name ?? '');
+    setEditText(data.text ?? data.rules ?? '');
+    setEditScope(
+      e.scope === 'search' || e.scope === 'network' ? (e.scope as 'search' | 'network') : 'global'
+    );
+  }
+
+  async function saveEdit(id: number, type: string) {
+    setBusyId(id);
+    try {
+      // For learned_rules we update the `rules` field; for everything else — `text` + `name`
+      const patch: { name?: string; text?: string; rules?: string; scope?: string } = {
+        scope: editScope,
+      };
+      if (type === 'learned_rules') {
+        patch.rules = editText;
+      } else {
+        patch.name = editName;
+        patch.text = editText;
+      }
+      await api.editKnowledge(id, patch);
+      setEditingId(null);
+      load();
+    } catch (e) {
+      alert('❌ ' + (e as Error).message);
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -167,22 +204,52 @@ export default function Knowledge() {
                 {text && e.type !== 'document' ? <div className="muted">{text.slice(0, 100)}</div> : null}
               </div>
             )}
-            <button
-              onClick={() => del(e.id)}
-              disabled={busyId === e.id}
-              style={{
-                marginTop: 8,
-                padding: '4px 10px',
-                background: '#ef4444',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 6,
-                fontSize: 11,
-                cursor: 'pointer',
-              }}
-            >
-              {busyId === e.id ? '...' : '🗑 Удалить'}
-            </button>
+            {editingId === e.id ? (
+              <div style={{ marginTop: 10 }}>
+                {e.type !== 'learned_rules' && (
+                  <input
+                    value={editName}
+                    onChange={(ev) => setEditName(ev.target.value)}
+                    placeholder="Название"
+                    style={fieldStyle}
+                  />
+                )}
+                <div className="period-switch" style={{ marginTop: 6 }}>
+                  {(['global', 'search', 'network'] as const).map((s) => (
+                    <button key={s} className={editScope === s ? 'active' : ''} onClick={() => setEditScope(s)}>
+                      {s === 'global' ? 'Всё' : s === 'search' ? 'Поиск' : 'РСЯ'}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={editText}
+                  onChange={(ev) => setEditText(ev.target.value)}
+                  rows={8}
+                  style={{ ...fieldStyle, marginTop: 6, fontFamily: 'inherit', resize: 'vertical' }}
+                />
+                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                  <button
+                    onClick={() => saveEdit(e.id, e.type)}
+                    disabled={busyId === e.id}
+                    style={{ ...editBtn, background: 'var(--tg-button)', color: 'var(--tg-button-text)', flex: 1 }}
+                  >
+                    {busyId === e.id ? '...' : '💾 Сохранить'}
+                  </button>
+                  <button onClick={() => setEditingId(null)} style={{ ...editBtn, flex: 1 }}>✕ Отмена</button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                <button onClick={() => startEdit(e)} style={editBtn}>✏️ Изменить</button>
+                <button
+                  onClick={() => del(e.id)}
+                  disabled={busyId === e.id}
+                  style={{ ...editBtn, background: '#ef4444', color: '#fff' }}
+                >
+                  {busyId === e.id ? '...' : '🗑 Удалить'}
+                </button>
+              </div>
+            )}
           </div>
         );
       })}
@@ -198,4 +265,14 @@ const fieldStyle = {
   border: '1px solid rgba(255,255,255,0.1)',
   borderRadius: 8,
   fontSize: 14,
+} as const;
+
+const editBtn = {
+  padding: '6px 12px',
+  background: 'var(--tg-secondary)',
+  color: 'var(--tg-text)',
+  border: 'none',
+  borderRadius: 6,
+  fontSize: 11,
+  cursor: 'pointer',
 } as const;

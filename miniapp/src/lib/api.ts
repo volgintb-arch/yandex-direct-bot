@@ -174,6 +174,26 @@ export const api = {
   addKnowledgeDocument: (input: { name: string; scope?: string; text: string; tags?: string[] }) =>
     post<{ ok: true }>('/knowledge/document', input),
   deleteKnowledge: (id: number) => post<{ ok: true }>(`/knowledge/${id}/delete`),
+  editKnowledge: (id: number, patch: { name?: string; text?: string; rules?: string; scope?: string }) =>
+    post<{ ok: true }>(`/knowledge/${id}/edit`, patch),
+  optimizeCampaign: (id: number, days = 30) =>
+    post<{ tips: string }>(`/campaigns/${id}/optimize?days=${days}`),
+  approvalDetails: (id: string) =>
+    request<{
+      id: string;
+      status: string;
+      campaignType: string;
+      geo: string;
+      dailyBudget: number;
+      targetCpl: number | null;
+      siteUrl: string;
+      selectedVariantId: string | null;
+      variants: Variant[];
+      selectedImageHashes: string[];
+      createdAt: string;
+    }>(`/approvals/${id}`),
+  reviseApproval: (id: string, variantId: string, revisionText: string) =>
+    post<{ ok: true; variant: Variant }>(`/approvals/${id}/revise`, { variantId, revisionText }),
   images: () => request<{ images: ImageEntry[] }>('/images'),
   uploadImage: (dataUrl: string, name?: string) =>
     post<{ hash: string; width: number; height: number; target: string }>('/upload-image', {

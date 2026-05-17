@@ -55,8 +55,9 @@ export async function generate(opts: DeepseekGenerateOptions): Promise<string> {
     model: config.DEEPSEEK_MODEL_URI,
     messages,
     temperature: opts.temperature ?? 0.5,
-    // DeepSeek reasoning needs headroom; default to 8000 unless overridden.
-    max_tokens: opts.maxTokens ?? 8000,
+    // DeepSeek "thinks" before answering. Reasoning eats tokens — give
+    // plenty so there's room for the actual final answer afterwards.
+    max_tokens: Math.max(opts.maxTokens ?? 0, 12000),
   };
 
   const start = Date.now();
