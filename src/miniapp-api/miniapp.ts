@@ -368,6 +368,7 @@ app.get('/approvals/:id', async (c) => {
   return c.json({
     id: a.id,
     status: a.status,
+    errorMessage: a.errorMessage,
     campaignType: a.campaignType,
     geo: a.geo,
     dailyBudget: a.dailyBudget,
@@ -416,8 +417,12 @@ app.post('/approvals/:id/revise', async (c) => {
 /* ───── /api/miniapp/approvals ───── */
 app.get('/approvals', async (c) => {
   const status = c.req.query('status') ?? 'pending';
+  // "pending" tab shows in-progress generations + failed too, so the
+  // user can monitor and clean them up from one place.
+  const statusFilter =
+    status === 'pending' ? { in: ['pending', 'generating', 'failed'] } : status;
   const rows = await db.approval.findMany({
-    where: { status },
+    where: { status: statusFilter },
     orderBy: { createdAt: 'desc' },
     take: 50,
     select: {
@@ -530,9 +535,13 @@ app.post('/knowledge/:id/edit', async (c) => {
 });
 
 /* ───── POST /api/miniapp/create-campaign ─────
- * Run the full campaign-builder flow from the Mini App.
- * Creates an Approval ready to be picked up either from the bot
- * (via existing buttons) or from the Mini App approvals list.
+ * Async: creates an Approval row with status='generating' and returns
+ * its id immediately. Heavy work (CPL suggestion + 3-variant generation)
+ * runs in the background — the front polls /approvals/:id until the
+ * status flips to 'pending' (success) or 'failed' (errorMessage set).
+ *
+ * This avoids nginx/browser cutting off the request during the
+ * 60–180s DeepSeek run.
  */
 app.post('/create-campaign', async (c) => {
   const body = await c.req.json().catch(() => null) as
@@ -551,76 +560,97 @@ app.post('/create-campaign', async (c) => {
     return c.json({ error: 'kind, geo, budget, brief required' }, 400);
   }
 
-  try {
-    const tgUserId = c.get('tgUserId');
-    const builder = await import('../services/ai/campaign-builder.js');
-    const { config } = await import('../lib/config.js');
+  const tgUserId = c.get('tgUserId');
+  const { config } = await import('../lib/config.js');
+  const siteUrl = body.url?.trim() || config.BUSINESS_SITE;
 
-    let cpl = body.cpl;
-    if (!cpl) {
-      const sug = await builder.suggestCpl({
-        campaignType: body.kind,
-        geo: body.geo,
-        dailyBudget: body.budget,
-        brief: body.brief,
+  // Create placeholder row right away so the front has an id to poll.
+  const approval = await db.approval.create({
+    data: {
+      chatId: BigInt(tgUserId),
+      status: 'generating',
+      campaignType: body.kind,
+      geo: body.geo,
+      regionId: 0,
+      dailyBudget: body.budget,
+      siteUrl,
+      targetCpl: body.cpl ?? null,
+      cplSuggested: !body.cpl,
+      variants: [] as unknown as object,
+      ...(body.kind === 'network' && body.imageHash
+        ? { selectedImageHashes: [body.imageHash] }
+        : {}),
+      expiresAt: new Date(Date.now() + 24 * 3600 * 1000),
+    },
+  });
+
+  // Fire-and-forget background generation.
+  void (async () => {
+    try {
+      const builder = await import('../services/ai/campaign-builder.js');
+
+      let cpl = body.cpl;
+      if (!cpl) {
+        const sug = await builder.suggestCpl({
+          campaignType: body.kind!,
+          geo: body.geo!,
+          dailyBudget: body.budget!,
+          brief: body.brief!,
+        });
+        cpl = sug.suggested_cpl;
+      }
+
+      let result;
+      if (body.kind === 'search') {
+        result = await builder.buildSearchCampaign({
+          campaignType: 'search',
+          geo: body.geo!,
+          dailyBudget: body.budget!,
+          targetCpl: cpl,
+          siteUrl,
+          brief: body.brief!,
+        });
+      } else {
+        const img = body.imageHash
+          ? await db.yandexImage.findUnique({ where: { hash: body.imageHash } })
+          : null;
+        result = await builder.buildNetworkCampaign({
+          campaignType: 'network',
+          geo: body.geo!,
+          dailyBudget: body.budget!,
+          targetCpl: cpl,
+          siteUrl,
+          brief: body.brief!,
+          imageHash: body.imageHash ?? null,
+          imageDescription: img?.description ?? null,
+        });
+      }
+
+      // Guard against the user rejecting the draft mid-flight.
+      const r = await db.approval.updateMany({
+        where: { id: approval.id, status: 'generating' },
+        data: {
+          status: 'pending',
+          geo: result.resolvedGeoName,
+          regionId: result.regionId,
+          targetCpl: cpl,
+          variants: result.variants as unknown as object,
+        },
       });
-      cpl = sug.suggested_cpl;
+      if (r.count === 0) {
+        logger.info({ approvalId: approval.id }, 'approval no longer generating, discarding result');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error({ err: msg, approvalId: approval.id }, 'background generate failed');
+      await db.approval.updateMany({
+        where: { id: approval.id, status: 'generating' },
+        data: { status: 'failed', errorMessage: msg.slice(0, 500) },
+      }).catch(() => {});
     }
+  })();
 
-    let result;
-    if (body.kind === 'search') {
-      result = await builder.buildSearchCampaign({
-        campaignType: 'search',
-        geo: body.geo,
-        dailyBudget: body.budget,
-        targetCpl: cpl,
-        siteUrl: body.url ?? config.BUSINESS_SITE,
-        brief: body.brief,
-      });
-    } else {
-      const img = body.imageHash
-        ? await db.yandexImage.findUnique({ where: { hash: body.imageHash } })
-        : null;
-      result = await builder.buildNetworkCampaign({
-        campaignType: 'network',
-        geo: body.geo,
-        dailyBudget: body.budget,
-        targetCpl: cpl,
-        siteUrl: body.url ?? config.BUSINESS_SITE,
-        brief: body.brief,
-        imageHash: body.imageHash ?? null,
-        imageDescription: img?.description ?? null,
-      });
-    }
-
-    const approval = await db.approval.create({
-      data: {
-        chatId: BigInt(tgUserId),
-        status: 'pending',
-        campaignType: body.kind,
-        geo: result.resolvedGeoName,
-        regionId: result.regionId,
-        dailyBudget: body.budget,
-        siteUrl: body.url ?? config.BUSINESS_SITE,
-        targetCpl: cpl,
-        cplSuggested: !body.cpl,
-        variants: result.variants as unknown as object,
-        ...(body.kind === 'network' && body.imageHash
-          ? { selectedImageHashes: [body.imageHash] }
-          : {}),
-        expiresAt: new Date(Date.now() + 24 * 3600 * 1000),
-      },
-    });
-
-    return c.json({
-      approvalId: approval.id,
-      cpl,
-      variants: result.variants,
-    });
-  } catch (err) {
-    logger.error({ err }, 'create-campaign from miniapp failed');
-    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
-  }
+  return c.json({ approvalId: approval.id });
 });
 
 /* ───── POST /api/miniapp/approvals/:id/apply ───── */

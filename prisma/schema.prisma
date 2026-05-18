@@ -53,12 +53,13 @@ model Approval {
   id     String @id @default(cuid())
   chatId BigInt
 
-  status String @default("pending") // pending | approved | rejected | applied | expired
+  status String @default("pending") // generating | pending | failed | approved | rejected | applied | expired
+  errorMessage String? // populated when status='failed'
 
   // Campaign parameters
   campaignType  String // search | network | mixed
   geo           String
-  regionId      Int
+  regionId      Int    @default(0)
   dailyBudget   Int
   siteUrl       String
   targetCpl     Int?   // null = AI-suggested later

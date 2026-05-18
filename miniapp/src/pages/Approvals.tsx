@@ -66,6 +66,16 @@ export default function Approvals() {
               {a.campaignType === 'search' ? '🔍' : '📡'} {a.geo} · {a.dailyBudget}₽/день
               <span style={{ marginLeft: 6, color: 'var(--tg-link)', fontWeight: 400 }}>→</span>
             </div>
+            {a.status === 'generating' && (
+              <div style={{ marginTop: 4, fontSize: 12, color: '#fbbf24' }}>
+                ⏳ ИИ генерирует…
+              </div>
+            )}
+            {a.status === 'failed' && (
+              <div style={{ marginTop: 4, fontSize: 12, color: '#ef4444' }}>
+                ❌ Ошибка генерации
+              </div>
+            )}
             <div className="meta">
               CPL цель: {a.targetCpl ?? '—'} · {new Date(a.createdAt).toLocaleString('ru-RU')}
             </div>

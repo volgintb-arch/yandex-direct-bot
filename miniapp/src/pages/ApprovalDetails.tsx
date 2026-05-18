@@ -5,6 +5,7 @@ import { api, type Variant } from '../lib/api.js';
 interface Approval {
   id: string;
   status: string;
+  errorMessage: string | null;
   campaignType: string;
   geo: string;
   dailyBudget: number;
@@ -32,6 +33,15 @@ export default function ApprovalDetails() {
   }
 
   useEffect(reload, [id]);
+
+  // Poll while background generation is in progress.
+  useEffect(() => {
+    if (!id || data?.status !== 'generating') return;
+    const t = setInterval(() => {
+      api.approvalDetails(id).then(setData).catch(() => {});
+    }, 2500);
+    return () => clearInterval(t);
+  }, [id, data?.status]);
 
   async function applyVariant(variantId: string) {
     if (!id) return;
@@ -79,6 +89,59 @@ export default function ApprovalDetails() {
 
   if (error) return <div className="error">{error}</div>;
   if (!data) return <div className="muted">Загрузка...</div>;
+
+  if (data.status === 'generating') {
+    return (
+      <div>
+        <Link to="/approvals" style={{ color: 'var(--tg-link)', fontSize: 13 }}>← К списку</Link>
+        <h1 style={{ marginTop: 8 }}>
+          {data.campaignType === 'search' ? '🔍' : '📡'} {data.geo} · {data.dailyBudget}₽/день
+        </h1>
+        <div className="muted">{new Date(data.createdAt).toLocaleString('ru-RU')}</div>
+        <div className="section" style={{ marginTop: 16, textAlign: 'center' }}>
+          <div style={{ fontSize: 32 }}>⏳</div>
+          <div style={{ marginTop: 8, fontWeight: 600 }}>ИИ генерирует 3 варианта…</div>
+          <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+            Обычно 1–3 минуты. Страница обновится автоматически.
+            <br />Можно закрыть приложение — черновик останется тут.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (data.status === 'failed') {
+    return (
+      <div>
+        <Link to="/approvals" style={{ color: 'var(--tg-link)', fontSize: 13 }}>← К списку</Link>
+        <h1 style={{ marginTop: 8 }}>
+          {data.campaignType === 'search' ? '🔍' : '📡'} {data.geo} · {data.dailyBudget}₽/день
+        </h1>
+        <div className="error" style={{ marginTop: 12 }}>
+          ❌ Генерация не удалась
+          <div style={{ fontSize: 12, marginTop: 6, fontWeight: 400 }}>
+            {data.errorMessage ?? 'Неизвестная ошибка'}
+          </div>
+        </div>
+        <button
+          onClick={reject}
+          disabled={busy !== null}
+          style={{
+            marginTop: 12,
+            padding: '8px 14px',
+            background: '#ef4444',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 6,
+            fontSize: 12,
+            cursor: 'pointer',
+          }}
+        >
+          🗑 Удалить черновик
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div>

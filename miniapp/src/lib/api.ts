@@ -182,6 +182,7 @@ export const api = {
     request<{
       id: string;
       status: string;
+      errorMessage: string | null;
       campaignType: string;
       geo: string;
       dailyBudget: number;
@@ -209,5 +210,5 @@ export const api = {
     brief: string;
     imageHash?: string | null;
   }) =>
-    post<{ approvalId: string; cpl: number; variants: Variant[] }>('/create-campaign', input),
+    post<{ approvalId: string }>('/create-campaign', input),
 };
