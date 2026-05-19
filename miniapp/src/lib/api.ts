@@ -209,6 +209,8 @@ export const api = {
     url?: string;
     brief: string;
     imageHash?: string | null;
+    strategy?: string;
+    strategyBid?: number;
   }) =>
     post<{ approvalId: string }>('/create-campaign', input),
 };

@@ -65,6 +65,10 @@ model Approval {
   targetCpl     Int?   // null = AI-suggested later
   cplSuggested  Boolean @default(false)
 
+  // Bidding strategy (Direct)
+  strategy     String  @default("WB_MAXIMUM_CLICKS") // WB_MAXIMUM_CLICKS | WB_MAXIMUM_CONVERSION_RATE | AVERAGE_CPC
+  strategyBid  Int?    // for AVERAGE_CPC — desired avg CPC in rubles
+
   // AI variants
   variants            Json   // [{variant_id, title, strategy, draft: {...}}]
   selectedVariantId   String?

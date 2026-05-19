@@ -23,7 +23,9 @@ export interface ApplyInput {
   campaignType: 'search' | 'network';
   regionId: number;
   dailyBudget: number;
-  imageHash?: string; // for РСЯ
+  strategy?: string;     // bidding strategy type
+  strategyBid?: number;  // for AVERAGE_CPC — desired avg CPC in rubles
+  imageHash?: string;    // for РСЯ
 }
 
 /**
@@ -32,7 +34,7 @@ export interface ApplyInput {
  * reuse it. Always creates a NEW ad.
  */
 export async function applyVariant(input: ApplyInput): Promise<ApplyResult> {
-  const { variant, campaignType, regionId, dailyBudget, imageHash } = input;
+  const { variant, campaignType, regionId, dailyBudget, strategy, strategyBid, imageHash } = input;
   const draft = variant.draft;
 
   // 1. Campaign: find or create.
@@ -48,8 +50,8 @@ export async function applyVariant(input: ApplyInput): Promise<ApplyResult> {
   } else {
     campaignId =
       campaignType === 'search'
-        ? await createSearchCampaign({ name: draft.campaign_name, dailyBudgetRub: dailyBudget })
-        : await createNetworkCampaign({ name: draft.campaign_name, dailyBudgetRub: dailyBudget });
+        ? await createSearchCampaign({ name: draft.campaign_name, dailyBudgetRub: dailyBudget, strategy: strategy as never, strategyBid })
+        : await createNetworkCampaign({ name: draft.campaign_name, dailyBudgetRub: dailyBudget, strategy: strategy as never, strategyBid });
     campaignCreated = true;
     logger.info({ name: draft.campaign_name, id: campaignId }, 'created campaign');
   }

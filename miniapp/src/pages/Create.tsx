@@ -4,6 +4,25 @@ import { api } from '../lib/api.js';
 import ImagePicker from '../components/ImagePicker.js';
 
 type Kind = 'search' | 'network';
+type Strategy = 'WB_MAXIMUM_CLICKS' | 'WB_MAXIMUM_CONVERSION_RATE' | 'AVERAGE_CPC';
+
+const STRATEGIES: { value: Strategy; label: string; hint: string }[] = [
+  {
+    value: 'WB_MAXIMUM_CLICKS',
+    label: '🖱 Максимум кликов',
+    hint: 'Яндекс сам подбирает ставки, чтобы получить как можно больше кликов в рамках бюджета. Хороший старт для новых кампаний.',
+  },
+  {
+    value: 'WB_MAXIMUM_CONVERSION_RATE',
+    label: '🎯 Максимум конверсий',
+    hint: 'Яндекс оптимизирует ставки под конверсии (нужна настроенная цель в Метрике). Лучше для зрелых кампаний с историей.',
+  },
+  {
+    value: 'AVERAGE_CPC',
+    label: '💰 Средняя цена клика',
+    hint: 'Вы задаёте желаемую цену клика — Яндекс удерживает среднее на этом уровне. Подходит, если знаете сколько стоит клик для вас.',
+  },
+];
 
 export default function Create() {
   const nav = useNavigate();
@@ -14,12 +33,18 @@ export default function Create() {
   const [url, setUrl] = useState('');
   const [brief, setBrief] = useState('');
   const [imageHash, setImageHash] = useState<string | null>(null);
+  const [strategy, setStrategy] = useState<Strategy>('WB_MAXIMUM_CLICKS');
+  const [strategyBid, setStrategyBid] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function submit() {
     if (!geo.trim() || !brief.trim() || budget < 100) {
       setError('Заполни Гео, Бюджет (≥100) и Бриф');
+      return;
+    }
+    if (strategy === 'AVERAGE_CPC' && (!strategyBid || parseInt(strategyBid, 10) < 1)) {
+      setError('Для стратегии «Средняя цена клика» укажи желаемую цену клика (₽)');
       return;
     }
     setError(null);
@@ -33,15 +58,17 @@ export default function Create() {
         url: url.trim() || undefined,
         brief: brief.trim(),
         imageHash: kind === 'network' ? imageHash : null,
+        strategy,
+        strategyBid: strategy === 'AVERAGE_CPC' ? parseInt(strategyBid, 10) : undefined,
       });
-      // Generation now runs in background — jump straight to the
-      // approval page which polls until variants are ready.
       nav(`/approvals/${r.approvalId}`);
     } catch (e) {
       setError((e as Error).message);
       setLoading(false);
     }
   }
+
+  const strategyInfo = STRATEGIES.find((s) => s.value === strategy)!;
 
   return (
     <div>
@@ -80,6 +107,42 @@ export default function Create() {
           onChange={setUrl}
           placeholder="https://brn.questlegends.ru"
         />
+
+        {/* Bidding strategy */}
+        <div style={{ marginTop: 12 }}>
+          <label className="muted">Стратегия ставок Яндекс.Директ</label>
+          <select
+            value={strategy}
+            onChange={(e) => setStrategy(e.target.value as Strategy)}
+            style={{
+              ...inputStyle,
+              marginTop: 4,
+              appearance: 'none',
+              WebkitAppearance: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            {STRATEGIES.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+          <div className="muted" style={{ fontSize: 11, marginTop: 5, lineHeight: 1.4 }}>
+            {strategyInfo.hint}
+          </div>
+        </div>
+
+        {strategy === 'AVERAGE_CPC' && (
+          <Field
+            label="Желаемая средняя цена клика, ₽"
+            value={strategyBid}
+            onChange={setStrategyBid}
+            type="number"
+            placeholder="30"
+          />
+        )}
+
         <div style={{ marginTop: 12 }}>
           <label className="muted">Бриф для ИИ — что рекламируем, кому, в честь чего</label>
           <textarea
@@ -113,11 +176,8 @@ export default function Create() {
             cursor: 'pointer',
           }}
         >
-          {loading ? '⏳ Запускаю генерацию...' : '🚀 Сгенерировать 3 варианта'}
+          {loading ? '⏳ Создаю черновик...' : '🚀 Сгенерировать 3 варианта'}
         </button>
-        <div className="muted" style={{ fontSize: 11, marginTop: 6, textAlign: 'center' }}>
-          Генерация занимает 1–3 минуты. Можно закрыть приложение — черновик появится в «🗂 Черновики».
-        </div>
       </div>
     </div>
   );

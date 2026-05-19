@@ -368,12 +368,14 @@ app.get('/approvals/:id', async (c) => {
   return c.json({
     id: a.id,
     status: a.status,
-    errorMessage: a.errorMessage,
+    errorMessage: a.errorMessage ?? null,
     campaignType: a.campaignType,
     geo: a.geo,
     dailyBudget: a.dailyBudget,
     targetCpl: a.targetCpl,
     siteUrl: a.siteUrl,
+    strategy: a.strategy,
+    strategyBid: a.strategyBid ?? null,
     selectedVariantId: a.selectedVariantId,
     variants: a.variants,
     selectedImageHashes: a.selectedImageHashes,
@@ -553,12 +555,17 @@ app.post('/create-campaign', async (c) => {
         url?: string;
         brief?: string;
         imageHash?: string | null;
+        strategy?: string;
+        strategyBid?: number;
       }
     | null;
 
   if (!body?.kind || !body.geo || !body.budget || !body.brief) {
     return c.json({ error: 'kind, geo, budget, brief required' }, 400);
   }
+
+  const VALID_STRATEGIES = ['WB_MAXIMUM_CLICKS', 'WB_MAXIMUM_CONVERSION_RATE', 'AVERAGE_CPC'];
+  const strategy = VALID_STRATEGIES.includes(body.strategy ?? '') ? body.strategy! : 'WB_MAXIMUM_CLICKS';
 
   const tgUserId = c.get('tgUserId');
   const { config } = await import('../lib/config.js');
@@ -576,6 +583,8 @@ app.post('/create-campaign', async (c) => {
       siteUrl,
       targetCpl: body.cpl ?? null,
       cplSuggested: !body.cpl,
+      strategy,
+      strategyBid: body.strategyBid ?? null,
       variants: [] as unknown as object,
       ...(body.kind === 'network' && body.imageHash
         ? { selectedImageHashes: [body.imageHash] }
@@ -673,6 +682,8 @@ app.post('/approvals/:id/apply', async (c) => {
       campaignType: approval.campaignType as 'search' | 'network',
       regionId: approval.regionId,
       dailyBudget: approval.dailyBudget,
+      strategy: approval.strategy,
+      strategyBid: approval.strategyBid ?? undefined,
       imageHash: approval.selectedImageHashes[0] ?? undefined,
     });
     await db.approval.update({

@@ -3,7 +3,6 @@ import { direct, toMicros } from './client.js';
 /** YYYY-MM-DD in Moscow timezone (Yandex Direct uses Moscow time). */
 function today(): string {
   const now = new Date();
-  // Convert to MSK (UTC+3)
   const msk = new Date(now.getTime() + 3 * 3600 * 1000);
   return msk.toISOString().slice(0, 10);
 }
@@ -38,7 +37,6 @@ export async function listCampaigns(filter?: {
 }
 
 export async function findCampaignByName(name: string): Promise<CampaignSummary | null> {
-  // Direct API doesn't filter by name — fetch all & filter locally.
   const all = await listCampaigns();
   return all.find((c) => c.Name === name) ?? null;
 }
@@ -46,21 +44,21 @@ export async function findCampaignByName(name: string): Promise<CampaignSummary 
 export type BiddingStrategyType =
   | 'WB_MAXIMUM_CLICKS'
   | 'WB_MAXIMUM_CONVERSION_RATE'
-  | 'WB_MAXIMUM_IMPRESSIONS'
   | 'AVERAGE_CPC'
-  | 'AVERAGE_CPA'
   | 'SERVING_OFF';
 
 export interface CreateSearchCampaignInput {
   name: string;
   dailyBudgetRub: number;
-  searchStrategy?: BiddingStrategyType; // default WB_MAXIMUM_CLICKS
+  strategy?: BiddingStrategyType; // default WB_MAXIMUM_CLICKS
+  strategyBid?: number;           // for AVERAGE_CPC — desired avg CPC in rubles
 }
 
 export interface CreateNetworkCampaignInput {
   name: string;
   dailyBudgetRub: number;
-  networkStrategy?: BiddingStrategyType; // default WB_MAXIMUM_CLICKS
+  strategy?: BiddingStrategyType; // default WB_MAXIMUM_CLICKS
+  strategyBid?: number;
 }
 
 interface DirectError {
@@ -84,9 +82,40 @@ function formatErrors(errors?: DirectError[]): string {
     .join('; ');
 }
 
+/**
+ * Build the BiddingStrategy object for the chosen strategy type.
+ * WeeklySpendLimit = dailyBudget × 7 (Direct auto-strategies use weekly limits).
+ */
+function buildSideStrategy(
+  strategy: BiddingStrategyType = 'WB_MAXIMUM_CLICKS',
+  weeklyLimitMicros: number,
+  strategyBidRub?: number
+): Record<string, unknown> {
+  switch (strategy) {
+    case 'WB_MAXIMUM_CONVERSION_RATE':
+      return {
+        BiddingStrategyType: 'WB_MAXIMUM_CONVERSION_RATE',
+        WbMaximumConversionRate: { WeeklySpendLimit: weeklyLimitMicros },
+      };
+    case 'AVERAGE_CPC':
+      return {
+        BiddingStrategyType: 'AVERAGE_CPC',
+        AverageCpc: {
+          AverageCpc: toMicros(strategyBidRub ?? 50),
+          WeeklySpendLimit: weeklyLimitMicros,
+        },
+      };
+    case 'WB_MAXIMUM_CLICKS':
+    default:
+      return {
+        BiddingStrategyType: 'WB_MAXIMUM_CLICKS',
+        WbMaximumClicks: { WeeklySpendLimit: weeklyLimitMicros },
+      };
+  }
+}
+
 export async function createSearchCampaign(input: CreateSearchCampaignInput): Promise<number> {
-  // Auto-strategy WB_MAXIMUM_CLICKS uses WeeklySpendLimit; DailyBudget is
-  // mutually exclusive with auto-strategies (Direct error 6000).
+  const weeklyLimit = toMicros(input.dailyBudgetRub * 7);
   const r = await direct<AddCampaignsResponse>('campaigns', 'add', {
     Campaigns: [
       {
@@ -94,12 +123,7 @@ export async function createSearchCampaign(input: CreateSearchCampaignInput): Pr
         StartDate: today(),
         TextCampaign: {
           BiddingStrategy: {
-            Search: {
-              BiddingStrategyType: 'WB_MAXIMUM_CLICKS',
-              WbMaximumClicks: {
-                WeeklySpendLimit: toMicros(input.dailyBudgetRub * 7),
-              },
-            },
+            Search: buildSideStrategy(input.strategy, weeklyLimit, input.strategyBid),
             Network: { BiddingStrategyType: 'SERVING_OFF' },
           },
         },
@@ -114,6 +138,7 @@ export async function createSearchCampaign(input: CreateSearchCampaignInput): Pr
 }
 
 export async function createNetworkCampaign(input: CreateNetworkCampaignInput): Promise<number> {
+  const weeklyLimit = toMicros(input.dailyBudgetRub * 7);
   const r = await direct<AddCampaignsResponse>('campaigns', 'add', {
     Campaigns: [
       {
@@ -122,12 +147,7 @@ export async function createNetworkCampaign(input: CreateNetworkCampaignInput): 
         TextCampaign: {
           BiddingStrategy: {
             Search: { BiddingStrategyType: 'SERVING_OFF' },
-            Network: {
-              BiddingStrategyType: 'WB_MAXIMUM_CLICKS',
-              WbMaximumClicks: {
-                WeeklySpendLimit: toMicros(input.dailyBudgetRub * 7),
-              },
-            },
+            Network: buildSideStrategy(input.strategy, weeklyLimit, input.strategyBid),
           },
         },
       },
